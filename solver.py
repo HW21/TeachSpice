@@ -60,12 +60,6 @@ class Resistor(Component):
         self.r = r
         self.g = 1 / self.r
 
-    # def i(self, v: float) -> float:
-    #     return -1 * self.g * v
-    #
-    # def di_dv(self, v: float) -> float:
-    #     return -1 * self.g
-
 
 class Isrc(Component):
     linear = True
@@ -73,12 +67,6 @@ class Isrc(Component):
     def __init__(self, *, idc: float, **kw):
         super().__init__(**kw)
         self.idc = idc
-
-    # def i(self, v: float) -> float:
-    #     return self.idc
-    #
-    # def di_dv(self, v: float) -> float:
-    #     return 0
 
 
 class Node(object):
@@ -112,6 +100,10 @@ class Circuit(object):
         self.node0 = Node()
         self.nodes = [self.node0]
         self.comps = []
+
+    def create_nodes(self, num: int):
+        for k in range(num):
+            self.add_node(Node())
 
     def add_node(self, node: Node) -> int:
         assert isinstance(node, Node)
@@ -161,8 +153,6 @@ class Solver:
                     self.G[comp.n.num - 1, comp.p.num - 1] -= comp.g
             elif isinstance(comp, Isrc):
                 self.s[comp.p.num - 1] = 1 * comp.idc
-            # elif isinstance(comp, Diode):
-            #     pass
             else:
                 raise NotImplementedError(f'Unknown Component {comp}')
 
@@ -239,24 +229,17 @@ class Solver:
 
 def main():
     ckt = Circuit()
+    num_nodes = 50
+    ckt.create_nodes(num_nodes)
 
-    n1 = Node()
-    ckt.add_node(n1)
-    n2 = Node()
-    ckt.add_node(n2)
-    i = Isrc(p=n1, n=ckt.node0, idc=2e-3)
-    ckt.add_comp(i)
-    r1 = Resistor(p=n1, n=n2, r=1e3)
-    ckt.add_comp(r1)
-    r2 = Resistor(p=n2, n=ckt.node0, r=1e3)
-    ckt.add_comp(r2)
-    d = Diode(p=n2, n=ckt.node0)
-    ckt.add_comp(d)
+    for k in range(num_nodes):
+        r = Resistor(p=ckt.nodes[k + 1], n=ckt.nodes[k], r=(num_nodes - 1) * 1e3)
+        ckt.add_comp(r)
 
-    # d = Diode()
-    # n.add_conn(d)
-    # d = Diode(isat=1e-17)
-    # n.add_conn(d)
+    i = Isrc(p=ckt.nodes[num_nodes], n=ckt.node0, idc=1e-3 / (num_nodes - 1))
+    d = Diode(p=ckt.nodes[1], n=ckt.node0)
+    for _ in i, d:
+        ckt.add_comp(_)
 
     s = Solver(ckt=ckt)
     s.solve()
