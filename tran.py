@@ -123,6 +123,11 @@ class Circuit(object):
         self.node0 = Node()
         self.nodes = [self.node0]
         self.comps = []
+        self.define()
+
+    def define(self) -> None:
+        """ Sub-classes can add content here. """
+        pass
 
     def create_nodes(self, num: int):
         for k in range(num):
@@ -133,6 +138,10 @@ class Circuit(object):
         node.num = len(self.nodes)
         self.nodes.append(node)
         return len(self.nodes) - 1
+
+    def create_comp(self, cls: type, p: Node, n: Node, **kw) -> Component:
+        comp = cls(p=p, n=n, **kw)
+        return self.add_comp(comp=comp)
 
     def add_comp(self, comp: Component) -> Component:
         assert isinstance(comp, Component)
@@ -152,22 +161,21 @@ class MatrixEq:
         ckt.mx = self
 
         self.num_nodes = len(ckt.nodes) - 1
-        # Add capacitor current "nodes" (should re-name "variables")
-        # for comp in self.ckt.comps:
-        #     if isinstance(comp, Capacitor):
-        #         self.num_nodes += 1
-        #         comp.num = self.num_nodes
 
         self.G = np.zeros((self.num_nodes, self.num_nodes))
+        self.Gt = np.zeros((self.num_nodes, self.num_nodes))
         self.Jg = np.zeros((self.num_nodes, self.num_nodes))
         self.Hg = np.zeros(self.num_nodes)
         self.s = np.zeros(self.num_nodes)
+        self.st = np.zeros(self.num_nodes)
 
         for comp in self.ckt.comps:
             if not comp.linear:
                 # Deal with non-linear components elsewhere!
                 continue
-            if isinstance(comp, Resistor):
+            elif isinstance(comp, Capacitor):
+                continue
+            elif isinstance(comp, Resistor):
                 if comp.p is not self.ckt.node0:
                     self.G[comp.p.num - 1, comp.p.num - 1] += comp.g
                 if comp.n is not self.ckt.node0:
@@ -175,14 +183,6 @@ class MatrixEq:
                 if comp.p is not self.ckt.node0 and comp.n is not self.ckt.node0:
                     self.G[comp.p.num - 1, comp.n.num - 1] -= comp.g
                     self.G[comp.n.num - 1, comp.p.num - 1] -= comp.g
-            elif isinstance(comp, Capacitor):
-                if comp.p is not self.ckt.node0:
-                    self.G[comp.p.num - 1, comp.p.num - 1] += comp.c / the_timestep
-                if comp.n is not self.ckt.node0:
-                    self.G[comp.n.num - 1, comp.n.num - 1] += comp.c / the_timestep
-                if comp.p is not self.ckt.node0 and comp.n is not self.ckt.node0:
-                    self.G[comp.p.num - 1, comp.n.num - 1] -= comp.c / the_timestep
-                    self.G[comp.n.num - 1, comp.p.num - 1] -= comp.c / the_timestep
             elif isinstance(comp, Isrc):
                 self.s[comp.p.num - 1] = 1 * comp.idc
             else:
@@ -215,12 +215,12 @@ class MatrixEq:
 
     def res(self, x):
         """ Return the residual error, given solution `x`. """
-        return self.G.dot(x) + self.Hg - self.s
+        return (self.G + self.Gt).dot(x) + self.Hg - self.s - self.st
 
     def solve(self, x):
         """ Solve our temporary-valued matrix for a change in x. """
-        rhs = -1 * (self.G.dot(x) + self.Hg - self.s)
-        return np.linalg.solve(self.G + self.Jg, rhs)
+        rhs = -1 * ((self.G + self.Gt).dot(x) + self.Hg - self.s - self.st)
+        return np.linalg.solve(self.G + self.Gt + self.Jg, rhs)
 
 
 class Solver:
@@ -288,6 +288,8 @@ class Solver:
 
 
 class Tran(object):
+    """ Transient Solver """
+
     def __init__(self, mx: MatrixEq):
         self.mx = mx
         self.ckt = mx.ckt
@@ -296,24 +298,37 @@ class Tran(object):
 
     def update(self):
         """ Update time-dependent (dynamic) circuit element terms. """
+        self.mx.Gt = np.zeros((self.mx.num_nodes, self.mx.num_nodes))
+        self.mx.st = np.zeros(self.mx.num_nodes)
+
         for comp in self.ckt.comps:
             if isinstance(comp, Capacitor):
+                # Update the "resistive" part of the cap, e.g. C/dt
+                if comp.p is not self.ckt.node0:
+                    self.mx.Gt[comp.p.num - 1, comp.p.num - 1] += comp.c / the_timestep
+                if comp.n is not self.ckt.node0:
+                    self.mx.Gt[comp.n.num - 1, comp.n.num - 1] += comp.c / the_timestep
+                if comp.p is not self.ckt.node0 and comp.n is not self.ckt.node0:
+                    self.mx.Gt[comp.p.num - 1, comp.n.num - 1] -= comp.c / the_timestep
+                    self.mx.Gt[comp.n.num - 1, comp.p.num - 1] -= comp.c / the_timestep
+
+                # Update the "past current" part of the cap, e.g. V[k-1]*C/dt
                 vp = 0.0 if comp.p is self.ckt.node0 else self.v[comp.p.num - 1]
                 vn = 0.0 if comp.n is self.ckt.node0 else self.v[comp.n.num - 1]
                 v = vp - vn
                 rhs = - 1 * comp.c * v / the_timestep
-
                 if comp.p is not self.ckt.node0:
-                    self.mx.s[comp.p.num - 1] = -1 * rhs
+                    self.mx.st[comp.p.num - 1] = -1 * rhs
                 if comp.n is not self.ckt.node0:
-                    self.mx.s[comp.n.num - 1] = 1 * rhs
+                    self.mx.st[comp.n.num - 1] = 1 * rhs
 
     def iterate(self):
         """ Run a single Newton solver """
         s = Solver(mx=self.mx)
         v = s.solve()
-        print(f'New Solution {v}')
+        # print(f'New Solution {v}')
         self.v = v
+        self.history.append(self.v)
 
     def solve(self):
         t = 0
@@ -324,24 +339,37 @@ class Tran(object):
             self.iterate()
 
 
-def main():
+def sim(c=1e-12):
+    """ Create an instance of the circuit under test, and simulate it. """
     ckt = Circuit()
-    num_nodes = 2
+    num_nodes = 5
     ckt.create_nodes(num_nodes)
 
     for k in range(num_nodes):
-        r = Resistor(p=ckt.nodes[k + 1], n=ckt.nodes[k], r=(num_nodes - 1) * 1e3)
-        ckt.add_comp(r)
+        ckt.create_comp(cls=Resistor, p=ckt.nodes[k + 1], n=ckt.nodes[k], r=(num_nodes - 1) * 1e3)
 
-    i = Isrc(p=ckt.nodes[num_nodes], n=ckt.node0, idc=1e-3 / (num_nodes - 1))
-    d = Diode(p=ckt.nodes[1], n=ckt.node0)
-    c = Capacitor(p=ckt.nodes[1], n=ckt.node0, c=1e-12)
-    for _ in i, d, c:
-        ckt.add_comp(_)
+    ckt.create_comp(cls=Isrc, p=ckt.nodes[num_nodes], n=ckt.node0, idc=1e-3 / (num_nodes - 1))
+    ckt.create_comp(cls=Capacitor, p=ckt.nodes[1], n=ckt.node0, c=c)
+    # ckt.create_comp(cls=Diode, p=ckt.nodes[1], n=ckt.node0)
 
     m = MatrixEq(ckt=ckt)
     s = Tran(mx=m)
     s.solve()
+
+    return s
+
+
+def main():
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    for c in 1e-14, 1e-13, 1e-12:
+        s = sim(c=c)
+        df = pd.DataFrame.from_records(s.history)
+        print(df)
+        plt.plot(df[0])
+        plt.plot(df[1])
+    plt.show()
 
 
 if __name__ == '__main__':
