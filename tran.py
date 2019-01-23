@@ -77,11 +77,17 @@ class Resistor(Component):
 
 
 class Capacitor(Component):
-    linear = True
+    linear = False
 
     def __init__(self, *, c: float, **kw):
         super().__init__(**kw)
         self.c = c
+
+    def q(self, v: float) -> float:
+        return self.c * v
+
+    def dq_dv(self, v: float) -> float:
+        return self.c
 
 
 class Isrc(Component):
@@ -154,6 +160,11 @@ class Circuit(object):
 class MatrixEq:
     """ Represents the non-linear matrix-equation
     G*x + H*g(x) = s
+
+    And the attendant break-downs which help us solve it.
+    f(x) = G*x + H*g(x) - s
+    Jf(x) * dx + f(x) = 0
+    Jf(x) = df(x)/dx = G + Jg(x)
     """
 
     def __init__(self, ckt: Circuit):
@@ -195,23 +206,26 @@ class MatrixEq:
         for comp in self.ckt.comps:
             if comp.linear:
                 continue
+            vp = 0.0 if comp.p is self.ckt.node0 else x[comp.p.num - 1]
+            vn = 0.0 if comp.n is self.ckt.node0 else x[comp.n.num - 1]
+            v = vp - vn
             if isinstance(comp, Diode):
-                vp = 0.0 if comp.p is self.ckt.node0 else x[comp.p.num - 1]
-                vn = 0.0 if comp.n is self.ckt.node0 else x[comp.n.num - 1]
-                v = vp - vn
                 i = comp.i(v)
                 di_dv = comp.di_dv(v)
-                if comp.p is not self.ckt.node0:
-                    self.Hg[comp.p.num - 1] += i
-                    self.Jg[comp.p.num - 1, comp.p.num - 1] += di_dv
-                if comp.n is not self.ckt.node0:
-                    self.Hg[comp.n.num - 1] += i
-                    self.Jg[comp.p.num - 1, comp.p.num - 1] += di_dv
-                if comp.p is not self.ckt.node0 and comp.n is not self.ckt.node0:
-                    self.Jg[comp.p.num - 1, comp.n.num - 1] -= di_dv
-                    self.Jg[comp.n.num - 1, comp.p.num - 1] -= di_dv
-            else:
-                raise NotImplementedError(f'Unknown Component {comp}')
+            elif isinstance(comp, Capacitor):
+                # Update the "resistive" part of the cap, e.g. C/dt, and
+                # the "past current" part of the cap, e.g. V[k-1]*C/dt
+                di_dv = comp.dq_dv(v) / the_timestep
+                i = comp.q(v) / the_timestep - v * di_dv
+            if comp.p is not self.ckt.node0:
+                self.Hg[comp.p.num - 1] += i
+                self.Jg[comp.p.num - 1, comp.p.num - 1] += di_dv
+            if comp.n is not self.ckt.node0:
+                self.Hg[comp.n.num - 1] += i
+                self.Jg[comp.p.num - 1, comp.p.num - 1] += di_dv
+            if comp.p is not self.ckt.node0 and comp.n is not self.ckt.node0:
+                self.Jg[comp.p.num - 1, comp.n.num - 1] -= di_dv
+                self.Jg[comp.n.num - 1, comp.p.num - 1] -= di_dv
 
     def res(self, x):
         """ Return the residual error, given solution `x`. """
@@ -219,17 +233,13 @@ class MatrixEq:
 
     def solve(self, x):
         """ Solve our temporary-valued matrix for a change in x. """
-        rhs = -1 * ((self.G + self.Gt).dot(x) + self.Hg - self.s - self.st)
-        return np.linalg.solve(self.G + self.Gt + self.Jg, rhs)
+        rhs = -1 * self.res(x)
+        dx = np.linalg.solve(self.G + self.Gt + self.Jg, rhs)
+        return dx
 
 
 class Solver:
-    """ Newton-Raphson Solver
-
-    f(x) = G*x + H*g(x) - s
-    Jf(x) * dx + f(x) = 0
-    Jf(x) = df(x)/dx = G + Jg(x)
-    """
+    """ Newton-Raphson Solver """
 
     def __init__(self, mx: MatrixEq, x0=None):
         self.mx = mx
@@ -303,20 +313,11 @@ class Tran(object):
 
         for comp in self.ckt.comps:
             if isinstance(comp, Capacitor):
-                # Update the "resistive" part of the cap, e.g. C/dt
-                if comp.p is not self.ckt.node0:
-                    self.mx.Gt[comp.p.num - 1, comp.p.num - 1] += comp.c / the_timestep
-                if comp.n is not self.ckt.node0:
-                    self.mx.Gt[comp.n.num - 1, comp.n.num - 1] += comp.c / the_timestep
-                if comp.p is not self.ckt.node0 and comp.n is not self.ckt.node0:
-                    self.mx.Gt[comp.p.num - 1, comp.n.num - 1] -= comp.c / the_timestep
-                    self.mx.Gt[comp.n.num - 1, comp.p.num - 1] -= comp.c / the_timestep
-
                 # Update the "past current" part of the cap, e.g. V[k-1]*C/dt
                 vp = 0.0 if comp.p is self.ckt.node0 else self.v[comp.p.num - 1]
                 vn = 0.0 if comp.n is self.ckt.node0 else self.v[comp.n.num - 1]
                 v = vp - vn
-                rhs = - 1 * comp.c * v / the_timestep
+                rhs = - 1 * comp.q(v) / the_timestep
                 if comp.p is not self.ckt.node0:
                     self.mx.st[comp.p.num - 1] = -1 * rhs
                 if comp.n is not self.ckt.node0:
