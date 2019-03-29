@@ -46,6 +46,15 @@ class Component(object):
         Not this function must satisfy abs(limit(v)) <= abs(v), for any v. """
         return v
 
+    def mna_setup(self, an) -> None:
+        pass
+
+    def tstep(self, an) -> None:
+        pass
+
+    def newton_iter(self, an) -> None:
+        pass
+
 
 class Diode(Component):
     def __init__(self, *, isat=1e-16, vt=25e-3, **kw):
@@ -75,6 +84,15 @@ class Resistor(Component):
         self.r = r
         self.g = 1 / self.r
 
+    def mna_setup(self, an) -> None:
+        if self.p is not an.ckt.node0:
+            an.mx.G[self.p.num - 1, self.p.num - 1] += self.g
+        if self.n is not an.ckt.node0:
+            an.mx.G[self.n.num - 1, self.n.num - 1] += self.g
+        if self.p is not an.ckt.node0 and self.n is not an.ckt.node0:
+            an.mx.G[self.p.num - 1, self.n.num - 1] -= self.g
+            an.mx.G[self.n.num - 1, self.p.num - 1] -= self.g
+
 
 class Capacitor(Component):
     linear = False
@@ -89,6 +107,17 @@ class Capacitor(Component):
     def dq_dv(self, v: float) -> float:
         return self.c
 
+    def tstep(self, an) -> None:
+        vp = 0.0 if self.p is an.ckt.node0 else an.v[self.p.num - 1]
+        vn = 0.0 if self.n is an.ckt.node0 else an.v[self.n.num - 1]
+        v = vp - vn
+        # Update the "past charge" part of the cap equation
+        rhs = - 1 * self.q(v) / the_timestep
+        if self.p is not an.ckt.node0:
+            an.mx.st[self.p.num - 1] = -1 * rhs
+        if self.n is not an.ckt.node0:
+            an.mx.st[self.n.num - 1] = 1 * rhs
+
 
 class Isrc(Component):
     linear = True
@@ -96,6 +125,10 @@ class Isrc(Component):
     def __init__(self, *, idc: float, **kw):
         super().__init__(**kw)
         self.idc = idc
+
+    def mna_setup(self, an):
+        s = an.mx.s
+        s[self.p.num - 1] = 1 * self.idc
 
 
 class Node(object):
@@ -109,12 +142,6 @@ class Node(object):
     def add_conn(self, conn: Component):
         assert isinstance(conn, Component)
         self.conns.append(conn)
-
-    def i(self, v):
-        return sum([c.i(v) for c in self.conns])
-
-    def di_dv(self, v):
-        return sum([c.di_dv(v) for c in self.conns])
 
     def limit(self, v: float) -> float:
         for c in self.conns:
@@ -145,11 +172,13 @@ class Circuit(object):
         self.nodes.append(node)
         return len(self.nodes) - 1
 
-    def create_comp(self, cls: type, p: Node, n: Node, **kw) -> Component:
+    def create_comp(self, *, cls: type, p: Node, n: Node, **kw) -> Component:
+        """ Create and add Component of class `cls`, and return it. """
         comp = cls(p=p, n=n, **kw)
         return self.add_comp(comp=comp)
 
     def add_comp(self, comp: Component) -> Component:
+        """ Add Component `comp`, and return it. """
         assert isinstance(comp, Component)
         assert comp.p in self.nodes
         assert comp.n in self.nodes
@@ -157,7 +186,7 @@ class Circuit(object):
         return comp
 
 
-class MatrixEq:
+class MnaSystem(object):
     """ Represents the non-linear matrix-equation
     G*x + H*g(x) = s
 
@@ -167,8 +196,9 @@ class MatrixEq:
     Jf(x) = df(x)/dx = G + Jg(x)
     """
 
-    def __init__(self, ckt: Circuit):
+    def __init__(self, ckt, an):
         self.ckt = ckt
+        self.an = an
         ckt.mx = self
 
         self.num_nodes = len(ckt.nodes) - 1
@@ -180,26 +210,7 @@ class MatrixEq:
         self.s = np.zeros(self.num_nodes)
         self.st = np.zeros(self.num_nodes)
 
-        for comp in self.ckt.comps:
-            if not comp.linear:
-                # Deal with non-linear components elsewhere!
-                continue
-            elif isinstance(comp, Capacitor):
-                continue
-            elif isinstance(comp, Resistor):
-                if comp.p is not self.ckt.node0:
-                    self.G[comp.p.num - 1, comp.p.num - 1] += comp.g
-                if comp.n is not self.ckt.node0:
-                    self.G[comp.n.num - 1, comp.n.num - 1] += comp.g
-                if comp.p is not self.ckt.node0 and comp.n is not self.ckt.node0:
-                    self.G[comp.p.num - 1, comp.n.num - 1] -= comp.g
-                    self.G[comp.n.num - 1, comp.p.num - 1] -= comp.g
-            elif isinstance(comp, Isrc):
-                self.s[comp.p.num - 1] = 1 * comp.idc
-            else:
-                raise NotImplementedError(f'Unknown Component {comp}')
-
-    def update(self, x):
+    def update(self, x: np.ndarray) -> None:
         """ Update non-linear component operating points """
         self.Jg = np.zeros((self.num_nodes, self.num_nodes))
         self.Hg = np.zeros(self.num_nodes)
@@ -225,13 +236,13 @@ class MatrixEq:
                 self.Jg[comp.p.num - 1, comp.p.num - 1] += di_dv
             if comp.p is not self.ckt.node0 and comp.n is not self.ckt.node0:
                 self.Jg[comp.p.num - 1, comp.n.num - 1] -= di_dv
-                self.Jg[comp.n.num - 1, comp.p.num - 1] -= di_dv
+                self.Jg[comp.n.num - 1, self.p.num - 1] -= di_dv
 
-    def res(self, x):
+    def res(self, x: np.ndarray) -> np.ndarray:
         """ Return the residual error, given solution `x`. """
         return (self.G + self.Gt).dot(x) + self.Hg - self.s - self.st
 
-    def solve(self, x):
+    def solve(self, x: np.ndarray) -> np.ndarray:
         """ Solve our temporary-valued matrix for a change in x. """
         rhs = -1 * self.res(x)
         dx = np.linalg.solve(self.G + self.Gt + self.Jg, rhs)
@@ -241,7 +252,7 @@ class MatrixEq:
 class Solver:
     """ Newton-Raphson Solver """
 
-    def __init__(self, mx: MatrixEq, x0=None):
+    def __init__(self, mx: MnaSystem, x0=None):
         self.mx = mx
         self.x = x0 or np.zeros(mx.num_nodes)
         self.history = [self.x]
@@ -297,31 +308,33 @@ class Solver:
         return self.x
 
 
-class Tran(object):
+class Analysis(object):
+    def __init__(self, ckt: Circuit, **kw):
+        super().__init__(**kw)
+        self.ckt = ckt
+        self.mx = MnaSystem(ckt=ckt, an=self)
+        for comp in self.ckt.comps:
+            comp.mna_setup(self)
+
+
+class DcOp(Analysis):
+    pass
+
+
+class Tran(Analysis):
     """ Transient Solver """
 
-    def __init__(self, mx: MatrixEq):
-        self.mx = mx
-        self.ckt = mx.ckt
-        self.v = np.zeros(mx.num_nodes)
+    def __init__(self, ckt: Circuit):
+        super().__init__(ckt)
+        self.v = np.zeros(self.mx.num_nodes)
         self.history = [self.v]
 
     def update(self):
         """ Update time-dependent (dynamic) circuit element terms. """
         self.mx.Gt = np.zeros((self.mx.num_nodes, self.mx.num_nodes))
         self.mx.st = np.zeros(self.mx.num_nodes)
-
         for comp in self.ckt.comps:
-            if isinstance(comp, Capacitor):
-                # Update the "past current" part of the cap, e.g. V[k-1]*C/dt
-                vp = 0.0 if comp.p is self.ckt.node0 else self.v[comp.p.num - 1]
-                vn = 0.0 if comp.n is self.ckt.node0 else self.v[comp.n.num - 1]
-                v = vp - vn
-                rhs = - 1 * comp.q(v) / the_timestep
-                if comp.p is not self.ckt.node0:
-                    self.mx.st[comp.p.num - 1] = -1 * rhs
-                if comp.n is not self.ckt.node0:
-                    self.mx.st[comp.n.num - 1] = 1 * rhs
+            comp.tstep(an=self)
 
     def iterate(self):
         """ Run a single Newton solver """
@@ -333,7 +346,6 @@ class Tran(object):
 
     def solve(self):
         t = 0
-
         for k in range(10000):
             t += the_timestep
             self.update()
@@ -353,8 +365,7 @@ def sim(c=1e-12):
     ckt.create_comp(cls=Capacitor, p=ckt.nodes[1], n=ckt.node0, c=c)
     # ckt.create_comp(cls=Diode, p=ckt.nodes[1], n=ckt.node0)
 
-    m = MatrixEq(ckt=ckt)
-    s = Tran(mx=m)
+    s = Tran(ckt=ckt)
     s.solve()
 
     return s
