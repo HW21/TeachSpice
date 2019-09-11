@@ -1,0 +1,46 @@
+from .. import Circuit, DcOp, Resistor, Mos
+
+
+def nmos_inv(vgs):
+    class NmosInv(Circuit):
+        """ NMOS-Resistor Inverter """
+
+        def define(self):
+            self.create_nodes(1)
+            vdd = self.create_forced_node(name='vdd', v=1.0)
+            g = self.create_forced_node(name='vgs', v=vgs)
+
+            self.create_comp(cls=Mos, polarity=1,
+                             conns={'s': self.node0, 'b': self.node0,
+                                    'd': self.nodes[0], 'g': g})
+            self.create_comp(cls=Resistor, r=10e3,
+                             conns=dict(p=vdd, n=self.nodes[0], ), )
+            # "gmin" resistor
+            # FIXME: embed in analysis
+            self.create_comp(cls=Resistor, r=1e9,
+                             conns=dict(p=self.node0, n=self.nodes[0], ), )
+
+    return NmosInv()
+
+
+def test_nmos_inv():
+    vg = []
+    vd = []
+    vds = 1.0
+    for k in range(11):
+        vgs = k / 10.0
+        dut = nmos_inv(vgs)
+        s = DcOp(ckt=dut)
+
+        # FIXME: pretty brittle initial conditions
+        # s.solve([vds])
+        s.solve([0.013780287171624536])
+        vds = s.v[0]
+        vg += [vgs]
+        vd += [vds]
+    print(vg)
+    print(vd)
+
+    assert(vd[0] > 0.9)
+    assert (vd[-1] < 0.1)
+

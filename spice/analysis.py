@@ -18,7 +18,7 @@ i(k+1) = (v(k+1) - v(k)) * C/dt
 import numpy as np
 
 from . import the_timestep
-from .circuit import Circuit, Node
+from .circuit import Circuit
 from .solve import MnaSystem, Solver
 
 
@@ -27,12 +27,19 @@ class Analysis(object):
         super().__init__(**kw)
         self.ckt = ckt
         self.mx = MnaSystem(ckt=ckt, an=self)
+        self.solver = None
         for comp in self.ckt.comps:
             comp.mna_setup(self)
 
 
 class DcOp(Analysis):
-    pass
+    def solve(self, x0):
+        self.solver = Solver(mx=self.mx, x0=x0)
+        return self.solver.solve()
+
+    @property
+    def v(self):
+        return self.solver.x
 
 
 class Tran(Analysis):
@@ -42,7 +49,6 @@ class Tran(Analysis):
         super().__init__(ckt)
         self.v = np.zeros(self.mx.num_nodes)
         self.history = [self.v]
-        self.solver = None
 
     def update(self):
         """ Update time-dependent (dynamic) circuit element terms. """

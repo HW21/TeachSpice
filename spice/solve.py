@@ -7,7 +7,7 @@ class MnaSystem(object):
     G*x + H*g(x) = s
 
     And the attendant break-downs which help us solve it.
-    f(x) = G*x + H*g(x) - s
+    f(x) = G*x + H*g(x) - s  # The quantity to be zero'ed
     Jf(x) * dx + f(x) = 0
     Jf(x) = df(x)/dx = G + Jg(x)
     """
@@ -17,7 +17,7 @@ class MnaSystem(object):
         self.an = an
         ckt.mx = self
 
-        self.num_nodes = len(ckt.nodes) - 1
+        self.num_nodes = len(ckt.nodes)
 
         self.G = np.zeros((self.num_nodes, self.num_nodes))
         self.Gt = np.zeros((self.num_nodes, self.num_nodes))
@@ -39,8 +39,11 @@ class MnaSystem(object):
 
     def solve(self, x: np.ndarray) -> np.ndarray:
         """ Solve our temporary-valued matrix for a change in x. """
+        lhs = self.G + self.Gt + self.Jg
         rhs = -1 * self.res(x)
-        dx = np.linalg.solve(self.G + self.Gt + self.Jg, rhs)
+        print(f'lhs: {lhs}')
+        print(f'rhs: {rhs}')
+        dx = np.linalg.solve(lhs, rhs)
         return dx
 
 
@@ -49,8 +52,8 @@ class Solver:
 
     def __init__(self, mx: MnaSystem, x0=None):
         self.mx = mx
-        self.x = x0 or np.zeros(mx.num_nodes)
-        self.history = [self.x]
+        self.x = np.array(x0) if np.any(x0) else np.zeros(mx.num_nodes)
+        self.history = [np.copy(self.x)]
 
     def update(self):
         """ Update non-linear component operating points """
@@ -58,16 +61,23 @@ class Solver:
 
     def iterate(self) -> None:
         """ Update method for Newton iterations """
+        print(self.x)
         # Update non-linear component operating points
         self.update()
         # Solve Jf(x) * dx + f(x) = 0
         dx = self.mx.solve(self.x)
+        if np.any(np.abs(dx) > 0.1):
+            print(f'Limiting {dx}')
+            dx *= 0.1 / np.max(np.abs(dx))
+        print(f'Updating by {dx}')
         self.x += dx
-        self.history.append(self.x)
+        self.history.append(np.copy(self.x))
 
     def converged(self) -> bool:
         """ Convergence test, including Newton-iteration-similarity and KCL. """
-        self.update()
+
+        # FIXME: WTF we doing this for?
+        # self.update()
 
         # Newton iteration similarity
         v_tol = 1e-9

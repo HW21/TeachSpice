@@ -13,6 +13,7 @@ class Node(object):
         self.conns = []
         self.num = None
         self.ckt = None
+        self.solve = True
 
     def add_conn(self, conn: Component):
         assert isinstance(conn, Component)
@@ -30,9 +31,9 @@ class Circuit(object):
     def __init__(self):
         self.comps = []
         self.nodes = []
-        # Create node zero, and initialize our node-list
-        self.node0 = Node()
-        self.add_node(self.node0)
+        self.forces = {}
+        # Create node zero
+        self.node0 = self.create_forced_node(name='gnd', v=0.0)
         # Run any custom definition
         self.define()
 
@@ -51,6 +52,16 @@ class Circuit(object):
         self.nodes.append(node)
         return len(self.nodes) - 1
 
+    def create_forced_node(self, name: str, v: float) -> Node:
+        """ Create and return a forced node, at voltage `v` """
+        node = Node()
+        node.num = len(self.forces)
+        node.name = name
+        node.solve = False
+        node.ckt = self
+        self.forces[node] = v
+        return node
+
     def create_comp(self, *, cls: type, **kw) -> Component:
         """ Create and add Component of class `cls`, and return it. """
         comp = cls(**kw)
@@ -61,6 +72,6 @@ class Circuit(object):
         """ Add Component `comp`, and return it. """
         assert isinstance(comp, Component)
         for name, node in comp.conns.items():
-            assert node in self.nodes
+            assert node in self.nodes or node in self.forces
         self.comps.append(comp)
         return comp
