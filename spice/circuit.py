@@ -1,9 +1,4 @@
-import numpy as np
-from typing import Dict, AnyStr, SupportsFloat
-
-from .components import Component, Capacitor, Diode
-
-from . import the_timestep
+from .components import Component
 
 
 class Node(object):
@@ -65,13 +60,15 @@ class Circuit(object):
     def create_comp(self, *, cls: type, **kw) -> Component:
         """ Create and add Component of class `cls`, and return it. """
         comp = cls(**kw)
-        comp.ckt = self
+        # comp.ckt = self
         return self.add_comp(comp=comp)
 
     def add_comp(self, comp: Component) -> Component:
         """ Add Component `comp`, and return it. """
         assert isinstance(comp, Component)
+        assert comp.ckt is None
         for name, node in comp.conns.items():
             assert node in self.nodes or node in self.forces
         self.comps.append(comp)
+        comp.ckt = self
         return comp

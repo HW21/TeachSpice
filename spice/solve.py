@@ -7,9 +7,9 @@ class MnaSystem(object):
     G*x + H*g(x) = s
 
     And the attendant break-downs which help us solve it.
-    f(x) = G*x + H*g(x) - s  # The quantity to be zero'ed
-    Jf(x) * dx + f(x) = 0
-    Jf(x) = df(x)/dx = G + Jg(x)
+    f(x) = G*x + H*g(x) - s         # The quantity to be zero'ed
+    Jf(x) = df(x)/dx = G + Jg(x)    # Definition of the Jacobian matrix `Jf(x)`
+    Jf(x) * dx + f(x) = 0           # Newton update equation, to be solved for `dx`
     """
 
     def __init__(self, ckt, an):
@@ -41,8 +41,8 @@ class MnaSystem(object):
         """ Solve our temporary-valued matrix for a change in x. """
         lhs = self.G + self.Gt + self.Jg
         rhs = -1 * self.res(x)
-        print(f'lhs: {lhs}')
-        print(f'rhs: {rhs}')
+        # print(f'lhs: {lhs}')
+        # print(f'rhs: {rhs}')
         dx = np.linalg.solve(lhs, rhs)
         return dx
 
@@ -61,15 +61,14 @@ class Solver:
 
     def iterate(self) -> None:
         """ Update method for Newton iterations """
-        print(self.x)
         # Update non-linear component operating points
         self.update()
         # Solve Jf(x) * dx + f(x) = 0
         dx = self.mx.solve(self.x)
-        if np.any(np.abs(dx) > 0.1):
-            print(f'Limiting {dx}')
-            dx *= 0.1 / np.max(np.abs(dx))
-        print(f'Updating by {dx}')
+        # Step limiting
+        MAX_STEP = 0.1
+        if np.any(np.abs(dx) > MAX_STEP):
+            dx *= MAX_STEP / np.max(np.abs(dx))
         self.x += dx
         self.history.append(np.copy(self.x))
 

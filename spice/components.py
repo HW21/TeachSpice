@@ -117,7 +117,13 @@ class Resistor(Component):
     def __init__(self, *, r: float, **kw):
         super().__init__(**kw)
         self.r = r
-        self.g = 1 / self.r
+
+    def update(self, *, r: float) -> None:
+        self.r = r
+
+    @property
+    def g(self):
+        return 1 / self.r
 
     def mna_setup(self, an) -> None:
         p = self.conns['p']
@@ -188,7 +194,7 @@ class Isrc(Component):
 class Mos(Component):
     """ Level-Zero MOS Model """
     ports = ['g', 'd', 's', 'b']
-    vth = 0.15
+    vth = 0.25
     beta = 50e-3
     lam = 1.0 / 30  # Sorry "lambda" is a Python language keyword
 
@@ -199,7 +205,6 @@ class Mos(Component):
     def mna_update(self, an) -> None:
         mx = an.mx
         v = self.get_v(an)
-        print(v)
 
         vds = self.polarity * (v['d'] - v['s'])
         vds = min(vds, 1.0)
@@ -209,27 +214,27 @@ class Mos(Component):
 
         # FIXME: vds < 0
         if vds < 0 or vov <= 0:  # Cutoff
-            print('In Cutoff')
+            # print('In Cutoff')
             ids = 0
             gm = 0
             gds = 0
         elif vds >= vov:  # Saturation
-            print('In Sat')
+            # print('In Sat')
             ids = self.beta / 2 * (vov ** 2) * (1 + self.lam * vds)
             gm = self.beta * vov * (1 + self.lam * vds)
             gds = self.lam * self.beta / 2 * (vov ** 2)
         else:  # Triode
-            print('In Triode')
+            # print('In Triode')
             ids = self.beta * ((vov * vds) - (vds ** 2) / 2)
             gm = self.beta * vds
             gds = self.beta * (vov - vds)
 
-        if gds != 0:
-            rds = 1 / gds
-        else:
-            rds = np.NaN
-        d_ = {"gm": gm, "gds": gds, "rds": rds, "ids": ids}
-        print(f'Op Point: {d_}')
+        # if gds != 0:
+        #     rds = 1 / gds
+        # else:
+        #     rds = np.NaN
+        # d_ = {"gm": gm, "gds": gds, "rds": rds, "ids": ids}
+        # print(f'Op Point: {d_}')
 
         d = self.conns['d']
         s = self.conns['s']

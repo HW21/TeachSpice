@@ -15,10 +15,6 @@ def nmos_inv(vgs):
                                     'd': self.nodes[0], 'g': g})
             self.create_comp(cls=Resistor, r=10e3,
                              conns=dict(p=vdd, n=self.nodes[0], ), )
-            # "gmin" resistor
-            # FIXME: embed in analysis
-            self.create_comp(cls=Resistor, r=1e9,
-                             conns=dict(p=self.node0, n=self.nodes[0], ), )
 
     return NmosInv()
 
@@ -32,15 +28,12 @@ def test_nmos_inv():
         dut = nmos_inv(vgs)
         s = DcOp(ckt=dut)
 
-        # FIXME: pretty brittle initial conditions
-        # s.solve([vds])
-        s.solve([0.013780287171624536])
+        s.solve([vds])
         vds = s.v[0]
         vg += [vgs]
         vd += [vds]
     print(vg)
     print(vd)
 
-    assert(vd[0] > 0.9)
+    assert (vd[0] > 0.9)
     assert (vd[-1] < 0.1)
-
