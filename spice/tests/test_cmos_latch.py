@@ -29,10 +29,11 @@ def sim(x0=None):
     ckt = CmosLatch()
     s = DcOp(ckt=ckt)
     s.solve(x0)
+    print(s.v)
     return s
 
 
 def test_stuff():
     """ Run some sims!
     Sweep and plot a few RC parameters. """
-    sim([0.5, 0.5])
+    sim([0.1, 1.0])

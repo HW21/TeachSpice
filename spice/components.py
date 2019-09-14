@@ -238,17 +238,12 @@ class Mos(Component):
             gds = self.beta * ((vov - vds) * (1 + self.lam * vds) + self.lam * ((vov * vds) - (vds ** 2) / 2))
 
         rds = np.NaN if gds == 0 else 1 / gds
-        # if gds != 0:
-        #     rds = 1 / gds
-        # else:
-        #     rds = np.NaN
         d_ = {"ids": ids, "gds": gds, "gm": gm, "rds": rds, "mode": mode, 'rev': reversed}
-        print(f'Op Point: {d_}')
+        # print(f'Op Point: {d_}')
         return d_
 
     def mna_update(self, an) -> None:
         v = self.get_v(an)
-        print(v)
         op = self.op_point(v)
         ids = op['ids']
         gds = op['gds']
@@ -280,26 +275,3 @@ class Mos(Component):
             mx.Jg[s.num, g.num] -= rev * self.polarity * gm
         if g.solve and d.solve:
             mx.Jg[d.num, g.num] += rev * self.polarity * gm
-
-
-"""
-     vdd 
-ieq       gds 
-     v
-rl        rgmin
-     vss
-
-ieq + (vdd-v)*gds = v*(gl+gmin)
-ieq + vdd*gds = v*(gl+gmin+gds)
-
-
-vdd gds v zx
-v = vdd*(zx/zx+rds)
-
-i=vdd*gds v zx || gds
-v = (zx||gds) * (vdd*gds)
-  = zx * rds / (zx + rds) * (vdd / rds)
-  = vdd * zx / (zx + rds)
-
-So these two circuits are the same 
-"""

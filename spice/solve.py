@@ -47,8 +47,8 @@ class MnaSystem(object):
 
         lhs = self.G + self.Gt + self.Jg
         rhs = -1 * self.res(x)
-        print(f'lhs: {lhs}')
-        print(f'rhs: {rhs}')
+        # print(f'lhs: {lhs}')
+        # print(f'rhs: {rhs}')
         dx = np.linalg.solve(lhs, rhs)
         return dx
 
@@ -74,9 +74,9 @@ class Solver:
         # Step limiting
         MAX_STEP = 0.1
         if np.any(np.abs(dx) > MAX_STEP):
-            print(f'MAX STEPPING {np.max(np.abs(dx))}')
+            # print(f'MAX STEPPING {np.max(np.abs(dx))}')
             dx *= MAX_STEP / np.max(np.abs(dx))
-        print(f'Updating by: {dx}')
+        # print(f'Updating by: {dx}')
         self.x += dx
         self.history.append(np.copy(self.x))
 
@@ -106,7 +106,7 @@ class Solver:
         max_iters = 100
 
         for i in range(max_iters):
-            print(f'Iter #{i} - Guessing {self.x}')
+            # print(f'Iter #{i} - Guessing {self.x}')
             self.iterate()
             if self.converged():
                 break

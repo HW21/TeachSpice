@@ -60,10 +60,10 @@ class DcOp(Analysis):
 
         xi = np.copy(x0)
         while rmin_exponent <= 12:
-            print(f'Solving with rmin=10**{rmin_exponent}')
+            # print(f'Solving with rmin=10**{rmin_exponent}')
             self.solver = Solver(mx=self.mx, x0=xi)
             xi = self.solver.solve()
-            print(f'Solution: {xi}')
+            # print(f'Solution: {xi}')
             rmin_exponent += 1
             for r in rmin_resistors:
                 r.update(r=10 ** rmin_exponent)
@@ -114,20 +114,28 @@ class Contour(Analysis):
     def v(self):
         return self.solver.x
 
-    def explore(self):
-        xs = []
-        ys = []
-        dxs = []
-        x = -1.0
+    def explore(self, xmin=-1.0, xmax=1.0, xstep=0.1):
+        import itertools
 
-        while x <= 2.0:
+        self.xs = []
+        self.ys = []
+        self.dxs = []
+
+        nstep = int((xmax - xmin) / xstep) + 1
+        dim = np.linspace(xmin, xmax, nstep)
+        grid = len(self.ckt.nodes) * [dim]
+
+        for xi in itertools.product(*grid):
+            xi = np.array(xi)
+
             self.mna_setup()
-            self.solver = Solver(mx=self.mx, x0=[x])
+            self.solver = Solver(mx=self.mx, x0=xi)
             self.solver.update()
             y = self.solver.mx.res(self.solver.x)
             dx = self.solver.mx.solve(self.solver.x)
-            xs.append(x)
-            ys.append(y[0])
-            dxs.append(dx[0])
-            x += 1e-2
-        return (xs, ys, dxs)
+
+            self.xs.append(xi)
+            self.ys.append(y)
+            self.dxs.append(dx)
+
+        return self.xs, self.ys, self.dxs
