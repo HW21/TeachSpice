@@ -1,7 +1,7 @@
 from .. import Circuit, Node, Tran, Resistor, Capacitor, Diode, Isrc
 
 
-def rc_filter(c=1e-12, num_nodes=5):
+def rc_filter(c=1e-12, num_nodes=1):
     class RcFilter(Circuit):
         """ Current-Driven RC Filter,
         with Parameterizable R, C, and # intermediate nodes """
@@ -9,7 +9,7 @@ def rc_filter(c=1e-12, num_nodes=5):
         def define(self):
             self.create_nodes(num_nodes)
 
-            for k in range(num_nodes):
+            for k in range(num_nodes - 1):
                 self.create_comp(cls=Resistor,
                                  r=(num_nodes - 1) * 1e3,
                                  conns=dict(
@@ -17,27 +17,32 @@ def rc_filter(c=1e-12, num_nodes=5):
                                      n=self.nodes[k],
                                  ), )
 
-            self.create_comp(cls=Isrc,
-                             idc=1e-3 / (num_nodes - 1),
+            self.create_comp(cls=Resistor,
+                             r=1e3,
                              conns=dict(
-                                 p=self.nodes[num_nodes],
+                                 p=self.nodes[0],
+                                 n=self.node0,
+                             ), )
+            self.create_comp(cls=Isrc,
+                             idc=1e-3,
+                             conns=dict(
+                                 p=self.nodes[num_nodes - 1],
                                  n=self.node0,
                              ), )
 
             self.create_comp(cls=Capacitor,
                              c=c,
                              conns=dict(
-                                 p=self.nodes[1],
+                                 p=self.nodes[0],
                                  n=self.node0,
                              ), )
-            # self.create_comp(cls=Diode, p=self.nodes[1], n=self.node0)
 
     return RcFilter()
 
 
 def sim(c=1e-12):
     """ Create an instance of the circuit under test, and simulate it. """
-    num_nodes = 5
+    num_nodes = 2
     ckt = rc_filter(c=c, num_nodes=num_nodes)
 
     s = Tran(ckt=ckt)

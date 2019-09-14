@@ -74,6 +74,8 @@ def mna_update_nonlinear_twoterm(comp, an):
         # the "past current" part of the cap, e.g. V[k-1]*C/dt
         di_dv = comp.dq_dv(v) / the_timestep
         i = comp.q(v) / the_timestep - v * di_dv
+    else:
+        raise TypeError
 
     # Matrix Updates
     if p.solve:
@@ -158,16 +160,16 @@ class Capacitor(Component):
         return self.c
 
     def tstep(self, an) -> None:
-        p = self.conns['p'].num
-        n = self.conns['n'].num
+        p = self.conns['p']
+        n = self.conns['n']
         v = self.get_v(an)
         vd = v['p'] - v['n']
         # Update the "past charge" part of the cap equation
         rhs = - 1 * self.q(vd) / the_timestep
-        if p != 0:
-            an.mx.st[p - 1] = -1 * rhs
-        if n != 0:
-            an.mx.st[n - 1] = 1 * rhs
+        if p.solve:
+            an.mx.st[p.num] = -1 * rhs
+        if n.solve:
+            an.mx.st[n.num] = 1 * rhs
 
     def mna_update(self, an) -> None:
         return mna_update_nonlinear_twoterm(self, an)
@@ -186,6 +188,8 @@ class Isrc(Component):
     def mna_setup(self, an):
         s = an.mx.s
         p = self.conns['p']
+        n = self.conns['n']
+        assert not n.solve  # No floating sources, yet
         s[p.num] = 1 * self.idc
 
 
@@ -195,6 +199,7 @@ class Isrc(Component):
 
 class Mos(Component):
     """ Level-Zero MOS Model """
+
     ports = ['g', 'd', 's', 'b']
     vth = 0.25
     beta = 50e-3
@@ -213,8 +218,10 @@ class Mos(Component):
         vgs = min(vgs, 1.0)
         vov = vgs - self.vth
 
-        # FIXME: vds < 0
-        if vds < 0 or vov <= 0:  # Cutoff
+        reversed = bool(vds < 0)
+        if reversed: vds = -1 * vds
+
+        if vov <= 0:  # Cutoff
             mode = 'CUTOFF'
             ids = 0
             gm = 0
@@ -230,11 +237,12 @@ class Mos(Component):
             gm = self.beta * vds * (1 + self.lam * vds)
             gds = self.beta * ((vov - vds) * (1 + self.lam * vds) + self.lam * ((vov * vds) - (vds ** 2) / 2))
 
-        if gds != 0:
-            rds = 1 / gds
-        else:
-            rds = np.NaN
-        d_ = {"ids": ids, "gds": gds, "gm": gm, "rds": rds, "mode": mode}
+        rds = np.NaN if gds == 0 else 1 / gds
+        # if gds != 0:
+        #     rds = 1 / gds
+        # else:
+        #     rds = np.NaN
+        d_ = {"ids": ids, "gds": gds, "gm": gm, "rds": rds, "mode": mode, 'rev': reversed}
         print(f'Op Point: {d_}')
         return d_
 
@@ -245,6 +253,7 @@ class Mos(Component):
         ids = op['ids']
         gds = op['gds']
         gm = op['gm']
+        rev = -1 if op['rev'] else +1
 
         v = self.get_v(an)  # FIXME
         mx = an.mx
@@ -257,20 +266,20 @@ class Mos(Component):
 
         # FIXME: all these signs are suspect
         if d.solve:
-            mx.Hg[d.num] += self.polarity * ids
-            mx.Jg[d.num, d.num] += gds ##self.polarity * gds
+            mx.Hg[d.num] += rev * self.polarity * ids
+            mx.Jg[d.num, d.num] += gds  ##self.polarity * gds
         if s.solve:
-            mx.Hg[s.num] -= self.polarity * ids
-            mx.Jg[s.num, s.num] -= self.polarity * (gm + gds)
+            mx.Hg[s.num] -= rev * self.polarity * ids
+            mx.Jg[s.num, s.num] -= rev * self.polarity * (gm + gds)
         # else:
         #     mx.Hg[d.num] += gds * v['s'] ##'-= self.polarity * gds * v['s']
         if d.solve and s.solve:
-            mx.Jg[d.num, s.num] += self.polarity * (gm + gds)
-            mx.Jg[s.num, d.num] += self.polarity * gds
+            mx.Jg[d.num, s.num] += rev * self.polarity * (gm + gds)
+            mx.Jg[s.num, d.num] += rev * self.polarity * gds
         if g.solve and s.solve:
-            mx.Jg[s.num, g.num] -= self.polarity * gm
+            mx.Jg[s.num, g.num] -= rev * self.polarity * gm
         if g.solve and d.solve:
-            mx.Jg[d.num, g.num] += self.polarity * gm
+            mx.Jg[d.num, g.num] += rev * self.polarity * gm
 
 
 """

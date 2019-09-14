@@ -47,8 +47,8 @@ class MnaSystem(object):
 
         lhs = self.G + self.Gt + self.Jg
         rhs = -1 * self.res(x)
-        # print(f'lhs: {lhs}')
-        # print(f'rhs: {rhs}')
+        print(f'lhs: {lhs}')
+        print(f'rhs: {rhs}')
         dx = np.linalg.solve(lhs, rhs)
         return dx
 

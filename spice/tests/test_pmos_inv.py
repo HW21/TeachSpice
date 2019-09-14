@@ -29,7 +29,7 @@ def test_pmos_inv():
     vd = []
     vds = 0.0
     for k in range(11):
-        vgs = (10.0 - k) / 10.0
+        vgs = k / 10.0
         print(f'Running vgs={vgs}')
         dut = pmos_inv(vgs)
         s = DcOp(ckt=dut)
