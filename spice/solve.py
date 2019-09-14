@@ -26,7 +26,7 @@ class MnaSystem(object):
         self.s = np.zeros(self.num_nodes)
         self.st = np.zeros(self.num_nodes)
 
-    def update(self, x: np.ndarray) -> None:
+    def update(self) -> None:
         """ Update non-linear component operating points """
         self.Jg = np.zeros((self.num_nodes, self.num_nodes))
         self.Hg = np.zeros(self.num_nodes)
@@ -39,6 +39,12 @@ class MnaSystem(object):
 
     def solve(self, x: np.ndarray) -> np.ndarray:
         """ Solve our temporary-valued matrix for a change in x. """
+        # print(f'G: {self.G}')
+        # print(f'G-dot-x: {self.G.dot(x)}')
+        # print(f'Jg: {self.Jg}')
+        # print(f'Hg: {self.Hg}')
+        # print(f's: {self.s}')
+
         lhs = self.G + self.Gt + self.Jg
         rhs = -1 * self.res(x)
         # print(f'lhs: {lhs}')
@@ -52,12 +58,12 @@ class Solver:
 
     def __init__(self, mx: MnaSystem, x0=None):
         self.mx = mx
-        self.x = np.array(x0) if np.any(x0) else np.zeros(mx.num_nodes)
+        self.x = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(mx.num_nodes)
         self.history = [np.copy(self.x)]
 
     def update(self):
         """ Update non-linear component operating points """
-        return self.mx.update(self.x)
+        return self.mx.update()
 
     def iterate(self) -> None:
         """ Update method for Newton iterations """
@@ -68,7 +74,9 @@ class Solver:
         # Step limiting
         MAX_STEP = 0.1
         if np.any(np.abs(dx) > MAX_STEP):
+            print(f'MAX STEPPING {np.max(np.abs(dx))}')
             dx *= MAX_STEP / np.max(np.abs(dx))
+        print(f'Updating by: {dx}')
         self.x += dx
         self.history.append(np.copy(self.x))
 
@@ -98,12 +106,13 @@ class Solver:
         max_iters = 100
 
         for i in range(max_iters):
-            # print(f'Iter #{i} - Guessing {self.x}')
+            print(f'Iter #{i} - Guessing {self.x}')
             self.iterate()
             if self.converged():
                 break
 
         if i >= max_iters - 1:
+            print(self.history)
             raise Exception(f'Could Not Converge to Solution ')
 
         # print(f'Successfully Converged to {self.x} in {i+1} iterations')

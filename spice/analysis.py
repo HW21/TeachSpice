@@ -37,15 +37,23 @@ class Analysis(object):
 
 
 class DcOp(Analysis):
-    def solve(self, x0):
+    def solve(self, x0=[0.0]):
         """ Solve for steady-state response.
         Includes gmin-stepping style homotopy. """
+
+        x = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(len(self.ckt.nodes))
 
         # Set up gmin resistors
         rmin_exponent = 0
         rmin_resistors = []
-        for node in self.ckt.nodes:
-            r = Resistor(r=10 ** rmin_exponent, conns={'p': node, 'n': self.ckt.node0})
+        for num, node in enumerate(self.ckt.nodes):
+            # Gmin resistors tie to initial-condition guesses. Create them if necessary.
+            if x[num] == 0:
+                n = self.ckt.node0
+            else:
+                # FIXME: can re-use nodes of same voltage-value
+                n = self.ckt.create_forced_node(name=f'node{num}_force', v=x[num])
+            r = Resistor(r=10 ** rmin_exponent, conns={'p': node, 'n': n})
             self.ckt.add_comp(r)
             rmin_resistors.append(r)
         self.mna_setup()
@@ -98,3 +106,28 @@ class Tran(Analysis):
             t += the_timestep
             self.update()
             self.iterate()
+
+
+class Contour(Analysis):
+
+    @property
+    def v(self):
+        return self.solver.x
+
+    def explore(self):
+        xs = []
+        ys = []
+        dxs = []
+        x = -1.0
+
+        while x <= 2.0:
+            self.mna_setup()
+            self.solver = Solver(mx=self.mx, x0=[x])
+            self.solver.update()
+            y = self.solver.mx.res(self.solver.x)
+            dx = self.solver.mx.solve(self.solver.x)
+            xs.append(x)
+            ys.append(y[0])
+            dxs.append(dx[0])
+            x += 1e-2
+        return (xs, ys, dxs)

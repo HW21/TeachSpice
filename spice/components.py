@@ -60,12 +60,12 @@ TWO_TERM_PORTS = ['p', 'n']
 
 
 def mna_update_nonlinear_twoterm(comp, an):
-    x = an.solver.x
+    v_dict = comp.get_v(an)
     p = comp.conns['p']
     n = comp.conns['n']
-    vp = 0.0 if p.num == 0 else x[p.num]
-    vn = 0.0 if n.num == 0 else x[n.num]
-    v = vp - vn
+    v = v_dict['p'] - v_dict['n']
+
+    # Extract the type-dependent current and its derivatives
     if isinstance(comp, Diode):
         i = comp.i(v)
         di_dv = comp.di_dv(v)
@@ -74,12 +74,14 @@ def mna_update_nonlinear_twoterm(comp, an):
         # the "past current" part of the cap, e.g. V[k-1]*C/dt
         di_dv = comp.dq_dv(v) / the_timestep
         i = comp.q(v) / the_timestep - v * di_dv
+
+    # Matrix Updates
     if p.solve:
         an.mx.Hg[p.num] += i
         an.mx.Jg[p.num, p.num] += di_dv
     if n.solve:
         an.mx.Hg[n.num] += i
-        an.mx.Jg[p.num, p.num] += di_dv
+        an.mx.Jg[n.num, n.num] += di_dv
     if p.solve and n.solve:
         an.mx.Jg[p.num, n.num] -= di_dv
         an.mx.Jg[n.num, p.num] -= di_dv
@@ -202,9 +204,8 @@ class Mos(Component):
         super().__init__(**kwargs)
         self.polarity = 1 if polarity > 0 else -1
 
-    def mna_update(self, an) -> None:
-        mx = an.mx
-        v = self.get_v(an)
+    def op_point(self, v: dict) -> dict:
+        """ Calculate operating-point dict from voltage-dict """
 
         vds = self.polarity * (v['d'] - v['s'])
         vds = min(vds, 1.0)
@@ -214,43 +215,82 @@ class Mos(Component):
 
         # FIXME: vds < 0
         if vds < 0 or vov <= 0:  # Cutoff
-            # print('In Cutoff')
+            mode = 'CUTOFF'
             ids = 0
             gm = 0
             gds = 0
         elif vds >= vov:  # Saturation
-            # print('In Sat')
+            mode = 'SAT'
             ids = self.beta / 2 * (vov ** 2) * (1 + self.lam * vds)
             gm = self.beta * vov * (1 + self.lam * vds)
             gds = self.lam * self.beta / 2 * (vov ** 2)
         else:  # Triode
-            # print('In Triode')
-            ids = self.beta * ((vov * vds) - (vds ** 2) / 2)
-            gm = self.beta * vds
-            gds = self.beta * (vov - vds)
+            mode = 'TRIODE'
+            ids = self.beta * ((vov * vds) - (vds ** 2) / 2) * (1 + self.lam * vds)
+            gm = self.beta * vds * (1 + self.lam * vds)
+            gds = self.beta * ((vov - vds) * (1 + self.lam * vds) + self.lam * ((vov * vds) - (vds ** 2) / 2))
 
-        # if gds != 0:
-        #     rds = 1 / gds
-        # else:
-        #     rds = np.NaN
-        # d_ = {"gm": gm, "gds": gds, "rds": rds, "ids": ids}
-        # print(f'Op Point: {d_}')
+        if gds != 0:
+            rds = 1 / gds
+        else:
+            rds = np.NaN
+        d_ = {"ids": ids, "gds": gds, "gm": gm, "rds": rds, "mode": mode}
+        print(f'Op Point: {d_}')
+        return d_
+
+    def mna_update(self, an) -> None:
+        v = self.get_v(an)
+        print(v)
+        op = self.op_point(v)
+        ids = op['ids']
+        gds = op['gds']
+        gm = op['gm']
+
+        v = self.get_v(an)  # FIXME
+        mx = an.mx
 
         d = self.conns['d']
         s = self.conns['s']
         g = self.conns['g']
-        assert self.conns['b'].num == 0  # No floating bulk, yet
+        b = self.conns['b']
+        assert not b.solve  # No floating bulk, yet
 
+        # FIXME: all these signs are suspect
         if d.solve:
-            mx.Hg[d.num] += ids
-            mx.Jg[d.num, d.num] += gds
+            mx.Hg[d.num] += self.polarity * ids
+            mx.Jg[d.num, d.num] += gds ##self.polarity * gds
         if s.solve:
-            mx.Hg[s.num] -= ids
-            mx.Jg[s.num, s.num] -= (gm + gds)
+            mx.Hg[s.num] -= self.polarity * ids
+            mx.Jg[s.num, s.num] -= self.polarity * (gm + gds)
+        # else:
+        #     mx.Hg[d.num] += gds * v['s'] ##'-= self.polarity * gds * v['s']
         if d.solve and s.solve:
-            mx.Jg[d.num, s.num] += (gm + gds)
-            mx.Jg[s.num, d.num] += gds
+            mx.Jg[d.num, s.num] += self.polarity * (gm + gds)
+            mx.Jg[s.num, d.num] += self.polarity * gds
         if g.solve and s.solve:
-            mx.Jg[s.num, g.num] += gm
+            mx.Jg[s.num, g.num] -= self.polarity * gm
         if g.solve and d.solve:
-            mx.Jg[d.num, g.num] -= gm
+            mx.Jg[d.num, g.num] += self.polarity * gm
+
+
+"""
+     vdd 
+ieq       gds 
+     v
+rl        rgmin
+     vss
+
+ieq + (vdd-v)*gds = v*(gl+gmin)
+ieq + vdd*gds = v*(gl+gmin+gds)
+
+
+vdd gds v zx
+v = vdd*(zx/zx+rds)
+
+i=vdd*gds v zx || gds
+v = (zx||gds) * (vdd*gds)
+  = zx * rds / (zx + rds) * (vdd / rds)
+  = vdd * zx / (zx + rds)
+
+So these two circuits are the same 
+"""

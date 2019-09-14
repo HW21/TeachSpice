@@ -1,4 +1,5 @@
 from .. import Circuit, DcOp, Resistor, Mos
+from ..analysis import Contour
 
 
 def nmos_inv(vgs):
@@ -37,3 +38,17 @@ def test_nmos_inv():
 
     assert (vd[0] > 0.9)
     assert (vd[-1] < 0.1)
+
+
+# def test_nmos_inv_contour():
+#     xs = []
+#     dxs = []
+#     for k in range(11):
+#         vgs = k / 10.0
+#         dut = nmos_inv(vgs)
+#         an = Contour(dut)
+#         x, dx = an.explore()
+#         xs.append(x)
+#         dxs.append(dx)
+#     print(xs)
+#     print(dxs)
