@@ -36,4 +36,4 @@ def sim(x0=None):
 def test_stuff():
     """ Run some sims!
     Sweep and plot a few RC parameters. """
-    sim([0.1, 1.0])
+    sim([0.5, 0.5])

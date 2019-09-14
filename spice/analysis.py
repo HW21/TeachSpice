@@ -109,17 +109,19 @@ class Tran(Analysis):
 
 
 class Contour(Analysis):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.xs = []
+        self.ys = []
+        self.dxs = []
+        self.xfs = []
 
     @property
     def v(self):
         return self.solver.x
 
-    def explore(self, xmin=-1.0, xmax=1.0, xstep=0.1):
+    def explore(self, *, xmin=-1.0, xmax=1.0, xstep=0.1):
         import itertools
-
-        self.xs = []
-        self.ys = []
-        self.dxs = []
 
         nstep = int((xmax - xmin) / xstep) + 1
         dim = np.linspace(xmin, xmax, nstep)
@@ -134,8 +136,15 @@ class Contour(Analysis):
             y = self.solver.mx.res(self.solver.x)
             dx = self.solver.mx.solve(self.solver.x)
 
+            try:
+                self.solver = Solver(mx=self.mx, x0=xi)
+                xf = self.solver.solve()
+            except:
+                xf = len(self.ckt.nodes) * [np.NaN]
+
             self.xs.append(xi)
             self.ys.append(y)
             self.dxs.append(dx)
+            self.xfs.append(xf)
 
-        return self.xs, self.ys, self.dxs
+        return self.xs, self.ys, self.dxs, self.xfs
