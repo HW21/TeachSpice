@@ -15,12 +15,68 @@ i(k+1) = (v(k+1) - v(k)) * C/dt
        = v(k+1) * G - I
 """
 
+from typing import Dict, AnyStr, SupportsFloat
 import numpy as np
+import scipy.optimize
 
 from . import the_timestep
 from .circuit import Circuit
 from .solve import MnaSystem, Solver
 from .components import Resistor
+
+
+class ScipySolver:
+    def __init__(self, an, x0):
+        self.an = an
+        self.x0 = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(len(an.ckt.nodes))
+        self.x = self.x0
+        self.history = [self.x0]
+        self.results = []
+
+    def solve(self):
+        options = dict(fatol=1e-31, disp=False)
+        result = scipy.optimize.minimize(fun=self.guess, x0=self.x0, method='nelder-mead', options=options)
+
+        if not result.success:
+            raise TabError(str(result))
+        # print(f'Solved: {result.x[0]}')
+        return result.x
+
+    def get_v(self, comp) -> Dict[AnyStr, SupportsFloat]:
+        """ Get a dictionary of port-voltages, of the form `port_name`:`voltage`. """
+        v = {}
+        for name, node in comp.conns.items():
+            if node.solve:
+                v[name] = self.x[node.num]
+            else:
+                v[name] = self.an.ckt.forces[node]
+        return v
+
+    def guess(self, x):
+        # print(f'Guessing {x}')
+        self.x = x
+        self.history.append(x)
+        an = self.an
+        kcl_results = np.zeros(len(an.ckt.nodes))
+        for comp in an.ckt.comps:
+            comp_v = self.get_v(comp)
+            # print(f'{comp} has voltages {comp_v}')
+            comp_i = comp.i(comp_v)
+            # {d:1.3, s:=1.3, g:0, b:0}
+            for name, i in comp_i.items():
+                node = comp.conns[name]
+                if node.solve:
+                    # print(f'{comp} updating {node} by {i}')
+                    kcl_results[node.num] += i
+        # print(f'KCL: {kcl_results}')
+        rv = np.sum(kcl_results ** 2)
+        self.results.append(rv)
+        return rv
+
+
+""" 'Configuration' of which Solver to use """
+TheSolverCls = Solver
+# TheSolverCls = ScipySolver
 
 
 class Analysis(object):
@@ -61,7 +117,9 @@ class DcOp(Analysis):
         xi = np.copy(x0)
         while rmin_exponent <= 12:
             # print(f'Solving with rmin=10**{rmin_exponent}')
-            self.solver = Solver(mx=self.mx, x0=xi)
+
+            self.solver = TheSolverCls(self, x0=xi)
+
             xi = self.solver.solve()
             # print(f'Solution: {xi}')
             rmin_exponent += 1
@@ -94,7 +152,7 @@ class Tran(Analysis):
 
     def iterate(self):
         """ Run a single Newton solver """
-        self.solver = Solver(mx=self.mx)
+        self.solver = TheSolverCls(mx=self.mx)
         v = self.solver.solve()
         # print(f'New Solution {v}')
         self.v = v
@@ -131,13 +189,13 @@ class Contour(Analysis):
             xi = np.array(xi)
 
             self.mna_setup()
-            self.solver = Solver(mx=self.mx, x0=xi)
+            self.solver = TheSolverCls(mx=self.mx, x0=xi)
             self.solver.update()
             y = self.solver.mx.res(self.solver.x)
             dx = self.solver.mx.solve(self.solver.x)
 
             try:
-                self.solver = Solver(mx=self.mx, x0=xi)
+                self.solver = TheSolverCls(mx=self.mx, x0=xi)
                 xf = self.solver.solve()
             except:
                 xf = len(self.ckt.nodes) * [np.NaN]

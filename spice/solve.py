@@ -56,9 +56,10 @@ class MnaSystem(object):
 class Solver:
     """ Newton-Raphson Solver """
 
-    def __init__(self, mx: MnaSystem, x0=None):
-        self.mx = mx
-        self.x = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(mx.num_nodes)
+    def __init__(self, an, x0=None):
+        self.an = an
+        self.mx = an.mx
+        self.x = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(self.mx.num_nodes)
         self.history = [np.copy(self.x)]
 
     def update(self):

@@ -17,6 +17,9 @@ class Component(object):
         for name, node in conns.items():
             node.add_conn(self)
 
+    def __repr__(self):
+        return f'<{self.__class__.__name__}>'
+
     def get_v(self, an) -> Dict[AnyStr, SupportsFloat]:
         """ Get a dictionary of port-voltages, of the form `port_name`:`voltage`. """
         v = {}
@@ -97,9 +100,11 @@ class Diode(Component):
         self.isat = isat
         self.vt = vt
 
-    def i(self, v: float) -> float:
-        v = self.limit(v)
-        return 1 * self.isat * (np.exp(v / self.vt) - 1)
+    def i(self, v: Dict[AnyStr, SupportsFloat]) -> Dict[AnyStr, SupportsFloat]:
+        vd = v['p'] - v['n']
+        vd = self.limit(vd)
+        i0 = 1 * self.isat * (np.exp(vd / self.vt) - 1)
+        return dict(p=i0, n=-1 * i0)
 
     def di_dv(self, v: float) -> float:
         v = self.limit(v)
@@ -122,12 +127,21 @@ class Resistor(Component):
         super().__init__(**kw)
         self.r = r
 
+    def __repr__(self):
+        return f'<{self.__class__.__name__} r={self.r}>'
+
     def update(self, *, r: float) -> None:
+        # print(f'Updating {self} to {r}')
         self.r = r
 
     @property
     def g(self):
         return 1 / self.r
+
+    def i(self, v: Dict[AnyStr, SupportsFloat]) -> Dict[AnyStr, SupportsFloat]:
+        vd = v['p'] - v['n']
+        i0 = self.g * vd
+        return dict(p=i0, n=-1 * i0)
 
     def mna_setup(self, an) -> None:
         p = self.conns['p']
@@ -185,6 +199,9 @@ class Isrc(Component):
         super().__init__(**kw)
         self.idc = idc
 
+    def i(self, v: Dict[AnyStr, SupportsFloat]) -> Dict[AnyStr, SupportsFloat]:
+        return dict(p=self.idc, n=-1 * self.idc)
+
     def mna_setup(self, an):
         s = an.mx.s
         p = self.conns['p']
@@ -208,6 +225,39 @@ class Mos(Component):
     def __init__(self, *, polarity=1, **kwargs):
         super().__init__(**kwargs)
         self.polarity = 1 if polarity > 0 else -1
+
+    def i(self, v: Dict[AnyStr, SupportsFloat]) -> Dict[AnyStr, SupportsFloat]:
+        """ Calculate operating-point dict from voltage-dict """
+
+        vds = self.polarity * (v['d'] - v['s'])
+        vds = min(vds, 1.0)
+        vgs = self.polarity * (v['g'] - v['s'])
+        vgs = min(vgs, 1.0)
+        vov = vgs - self.vth
+
+        reversed = bool(vds < 0)
+        if reversed: vds = -1 * vds
+
+        if vov <= 0:  # Cutoff
+            mode = 'CUTOFF'
+            ids = 0
+            gm = 0
+            gds = 0
+        elif vds >= vov:  # Saturation
+            mode = 'SAT'
+            ids = self.beta / 2 * (vov ** 2) * (1 + self.lam * vds)
+            gm = self.beta * vov * (1 + self.lam * vds)
+            gds = self.lam * self.beta / 2 * (vov ** 2)
+        else:  # Triode
+            mode = 'TRIODE'
+            ids = self.beta * ((vov * vds) - (vds ** 2) / 2) * (1 + self.lam * vds)
+            gm = self.beta * vds * (1 + self.lam * vds)
+            gds = self.beta * ((vov - vds) * (1 + self.lam * vds) + self.lam * ((vov * vds) - (vds ** 2) / 2))
+
+        rds = np.NaN if gds == 0 else 1 / gds
+        d_ = {"d": ids, "s": -1 * ids, "g": 0.0, "b": 0.0}
+        # print(f'Op Point: {d_}')
+        return d_
 
     def op_point(self, v: dict) -> dict:
         """ Calculate operating-point dict from voltage-dict """

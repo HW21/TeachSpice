@@ -10,6 +10,9 @@ class Node(object):
         self.ckt = None
         self.solve = True
 
+    def __repr__(self):
+        return f'<Node num={self.num}>'
+
     def add_conn(self, conn: Component):
         assert isinstance(conn, Component)
         self.conns.append(conn)

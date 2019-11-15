@@ -23,7 +23,7 @@ def nmos_latch():
     return NmosLatch()
 
 
-def test_nmos_inv():
+def test_dcop():
     dut = nmos_latch()
     s = DcOp(ckt=dut)
 

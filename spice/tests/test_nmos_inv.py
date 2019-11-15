@@ -20,10 +20,20 @@ def nmos_inv(vgs):
     return NmosInv()
 
 
-def test_nmos_inv():
+def test_dcop():
+    vds = 0.0  # 1.0
+    vgs = 0.0
+    dut = nmos_inv(vgs)
+    s = DcOp(ckt=dut)
+
+    y = s.solve([vds])
+    print(y)
+
+
+def test_dc_sweep():
     vg = []
     vd = []
-    vds = 1.0
+    vds = 0.0  # 1.0
     for k in range(11):
         vgs = k / 10.0
         dut = nmos_inv(vgs)
@@ -38,7 +48,6 @@ def test_nmos_inv():
 
     assert (vd[0] > 0.9)
     assert (vd[-1] < 0.1)
-
 
 # def test_nmos_inv_contour():
 #     xs = []
