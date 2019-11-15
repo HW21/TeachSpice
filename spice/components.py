@@ -61,6 +61,12 @@ class Component(object):
 # Port names for common two-terminal components
 TWO_TERM_PORTS = ['p', 'n']
 
+"""
+i = C * dv/dt
+  = C * (v[tk] - v[tk-1]) / dt
+  = C * v[tk]/dt - C * v[tk-1]/dt 
+"""
+
 
 def mna_update_nonlinear_twoterm(comp, an):
     v_dict = comp.get_v(an)
@@ -163,9 +169,11 @@ class Capacitor(Component):
     ports = TWO_TERM_PORTS
     linear = False
 
-    def __init__(self, *, c: float, **kw):
+    def __init__(self, *, c: float, v0: float = 0.0, **kw):
         super().__init__(**kw)
         self.c = c
+        self.v0 = v0
+        self.vm1 = v0
 
     def q(self, v: float) -> float:
         return self.c * v
@@ -173,11 +181,17 @@ class Capacitor(Component):
     def dq_dv(self, v: float) -> float:
         return self.c
 
+    def i(self, v: Dict[AnyStr, SupportsFloat]) -> Dict[AnyStr, SupportsFloat]:
+        vd = v['p'] - v['n']
+        i0 = self.c * (vd - self.vm1) / the_timestep
+        return dict(p=i0, n=-1 * i0)
+
     def tstep(self, an) -> None:
         p = self.conns['p']
         n = self.conns['n']
         v = self.get_v(an)
         vd = v['p'] - v['n']
+        self.vm1 = vd
         # Update the "past charge" part of the cap equation
         rhs = - 1 * self.q(vd) / the_timestep
         if p.solve:
@@ -200,7 +214,7 @@ class Isrc(Component):
         self.idc = idc
 
     def i(self, v: Dict[AnyStr, SupportsFloat]) -> Dict[AnyStr, SupportsFloat]:
-        return dict(p=self.idc, n=-1 * self.idc)
+        return dict(p=-1 * self.idc, n=self.idc)
 
     def mna_setup(self, an):
         s = an.mx.s
@@ -237,6 +251,7 @@ class Mos(Component):
 
         reversed = bool(vds < 0)
         if reversed: vds = -1 * vds
+        rev = -1 if reversed else +1
 
         if vov <= 0:  # Cutoff
             mode = 'CUTOFF'
@@ -255,6 +270,7 @@ class Mos(Component):
             gds = self.beta * ((vov - vds) * (1 + self.lam * vds) + self.lam * ((vov * vds) - (vds ** 2) / 2))
 
         rds = np.NaN if gds == 0 else 1 / gds
+        ids = rev * self.polarity * ids
         d_ = {"d": ids, "s": -1 * ids, "g": 0.0, "b": 0.0}
         # print(f'Op Point: {d_}')
         return d_

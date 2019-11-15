@@ -24,6 +24,16 @@ def pmos_inv(vgs):
     return PmosInv()
 
 
+def test_dcop():
+    vds = 0.0  # 1.0
+    vgs = 0.0
+    dut = pmos_inv(vgs)
+    s = DcOp(ckt=dut)
+
+    y = s.solve([vds])
+    print(y)
+
+
 def test_pmos_inv():
     vg = []
     vd = []

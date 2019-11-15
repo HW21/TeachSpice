@@ -26,7 +26,11 @@ from .components import Resistor
 
 
 class ScipySolver:
-    def __init__(self, an, x0):
+    """ Solver based on scipy.optimize.minimize
+    The general idea is *minimizing* KCL error, rather than solving for when it equals zero.
+    To our knowledge, no other SPICE solver tries this.  Maybe it's a bad idea. """
+
+    def __init__(self, an, *, x0=None):
         self.an = an
         self.x0 = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(len(an.ckt.nodes))
         self.x = self.x0
@@ -39,7 +43,7 @@ class ScipySolver:
 
         if not result.success:
             raise TabError(str(result))
-        # print(f'Solved: {result.x[0]}')
+        print(f'Solved: {result.x}')
         return result.x
 
     def get_v(self, comp) -> Dict[AnyStr, SupportsFloat]:
@@ -142,6 +146,7 @@ class Tran(Analysis):
         self.mna_setup()
         self.v = np.zeros(self.mx.num_nodes)
         self.history = [self.v]
+        self.t = 0.0
 
     def update(self):
         """ Update time-dependent (dynamic) circuit element terms. """
@@ -152,18 +157,22 @@ class Tran(Analysis):
 
     def iterate(self):
         """ Run a single Newton solver """
-        self.solver = TheSolverCls(mx=self.mx)
-        v = self.solver.solve()
-        # print(f'New Solution {v}')
+        self.solver = TheSolverCls(self)
+        try:
+            v = self.solver.solve()
+            print(f'New Solution {v}')
+        except Exception as e:
+            print(f'Failed to converge at {self.t}: {e}')
+            raise e
         self.v = v
         self.history.append(self.v)
 
     def solve(self):
-        t = 0
-        for k in range(10000):
-            t += the_timestep
+        for k in range(100):
+            print(f'Solving at time {self.t}')
             self.update()
             self.iterate()
+            self.t += the_timestep
 
 
 class Contour(Analysis):
@@ -189,13 +198,13 @@ class Contour(Analysis):
             xi = np.array(xi)
 
             self.mna_setup()
-            self.solver = TheSolverCls(mx=self.mx, x0=xi)
+            self.solver = TheSolverCls(self, x0=xi)
             self.solver.update()
             y = self.solver.mx.res(self.solver.x)
             dx = self.solver.mx.solve(self.solver.x)
 
             try:
-                self.solver = TheSolverCls(mx=self.mx, x0=xi)
+                self.solver = TheSolverCls(self, x0=xi)
                 xf = self.solver.solve()
             except:
                 xf = len(self.ckt.nodes) * [np.NaN]

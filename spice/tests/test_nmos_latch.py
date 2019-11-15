@@ -27,6 +27,6 @@ def test_dcop():
     dut = nmos_latch()
     s = DcOp(ckt=dut)
 
-    s.solve([0,0.15])
+    s.solve([0.3,0.7])
     print(s.v)
 
