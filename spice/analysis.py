@@ -1,86 +1,13 @@
 """
-Transient Solver
-
-i = C * dV/dt
-v(t) = integ(i/C, t) + v(0)
-v(k+1) - v(k) = i(k+1) * dt / C
-
-| 1 -dt/C | * | v(k+1) | = | v(k) |
-              | i(k+1) |
-
-or
-
-i(k+1) = (v(k+1) - v(k)) * C/dt
-       = v(k+1) * C/dt - v(k) * C/dt
-       = v(k+1) * G - I
+Analysis Classes
 """
 
-from typing import Dict, AnyStr, SupportsFloat
 import numpy as np
-import scipy.optimize
 
 from . import the_timestep
 from .circuit import Circuit
-from .solve import MnaSystem, Solver
+from .solve import MnaSystem, TheSolverCls
 from .components import Resistor
-
-
-class ScipySolver:
-    """ Solver based on scipy.optimize.minimize
-    The general idea is *minimizing* KCL error, rather than solving for when it equals zero.
-    To our knowledge, no other SPICE solver tries this.  Maybe it's a bad idea. """
-
-    def __init__(self, an, *, x0=None):
-        self.an = an
-        self.x0 = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(len(an.ckt.nodes))
-        self.x = self.x0
-        self.history = [self.x0]
-        self.results = []
-
-    def solve(self):
-        options = dict(fatol=1e-31, disp=False)
-        result = scipy.optimize.minimize(fun=self.guess, x0=self.x0, method='nelder-mead', options=options)
-
-        if not result.success:
-            raise TabError(str(result))
-        print(f'Solved: {result.x}')
-        return result.x
-
-    def get_v(self, comp) -> Dict[AnyStr, SupportsFloat]:
-        """ Get a dictionary of port-voltages, of the form `port_name`:`voltage`. """
-        v = {}
-        for name, node in comp.conns.items():
-            if node.solve:
-                v[name] = self.x[node.num]
-            else:
-                v[name] = self.an.ckt.forces[node]
-        return v
-
-    def guess(self, x):
-        # print(f'Guessing {x}')
-        self.x = x
-        self.history.append(x)
-        an = self.an
-        kcl_results = np.zeros(len(an.ckt.nodes))
-        for comp in an.ckt.comps:
-            comp_v = self.get_v(comp)
-            # print(f'{comp} has voltages {comp_v}')
-            comp_i = comp.i(comp_v)
-            # {d:1.3, s:=1.3, g:0, b:0}
-            for name, i in comp_i.items():
-                node = comp.conns[name]
-                if node.solve:
-                    # print(f'{comp} updating {node} by {i}')
-                    kcl_results[node.num] += i
-        # print(f'KCL: {kcl_results}')
-        rv = np.sum(kcl_results ** 2)
-        self.results.append(rv)
-        return rv
-
-
-""" 'Configuration' of which Solver to use """
-TheSolverCls = Solver
-# TheSolverCls = ScipySolver
 
 
 class Analysis(object):
@@ -94,6 +21,10 @@ class Analysis(object):
         self.mx = MnaSystem(ckt=self.ckt, an=self)
         for comp in self.ckt.comps:
             comp.mna_setup(self)
+
+    @property
+    def v(self):
+        return self.solver.x
 
 
 class DcOp(Analysis):
@@ -133,19 +64,30 @@ class DcOp(Analysis):
 
         return self.v
 
-    @property
-    def v(self):
-        return self.solver.x
-
 
 class Tran(Analysis):
-    """ Transient Solver """
+    """ Transient Solver
+
+    Notes, mostly on caps:
+
+    i = C * dV/dt
+    v(t) = integ(i/C, t) + v(0)
+    v(k+1) - v(k) = i(k+1) * dt / C
+
+    | 1 -dt/C | * | v(k+1) | = | v(k) |
+                  | i(k+1) |
+
+    or
+
+    i(k+1) = (v(k+1) - v(k)) * C/dt
+           = v(k+1) * C/dt - v(k) * C/dt
+           = v(k+1) * G - I
+    """
 
     def __init__(self, ckt: Circuit):
         super().__init__(ckt)
         self.mna_setup()
-        self.v = np.zeros(self.mx.num_nodes)
-        self.history = [self.v]
+        self.history = []
         self.t = 0.0
 
     def update(self):
@@ -157,20 +99,24 @@ class Tran(Analysis):
 
     def iterate(self):
         """ Run a single Newton solver """
-        self.solver = TheSolverCls(self)
+        # FIXME: initialize this initial-guess better
+        if self.solver:
+            x0 = self.v
+        else:
+            x0 = None
+        self.solver = TheSolverCls(self, x0=x0)
+        self.update()
         try:
             v = self.solver.solve()
-            print(f'New Solution {v}')
+            # print(f'New Solution {v}')
+            self.history.append(v)
         except Exception as e:
             print(f'Failed to converge at {self.t}: {e}')
             raise e
-        self.v = v
-        self.history.append(self.v)
 
     def solve(self):
-        for k in range(100):
-            print(f'Solving at time {self.t}')
-            self.update()
+        for k in range(1000):
+            # print(f'Solving at time {self.t}')
             self.iterate()
             self.t += the_timestep
 

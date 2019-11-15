@@ -80,9 +80,12 @@ def mna_update_nonlinear_twoterm(comp, an):
         di_dv = comp.di_dv(v)
     elif isinstance(comp, Capacitor):
         # Update the "resistive" part of the cap, e.g. C/dt, and
-        # the "past current" part of the cap, e.g. V[k-1]*C/dt
         di_dv = comp.dq_dv(v) / the_timestep
-        i = comp.q(v) / the_timestep - v * di_dv
+
+        # Update the "past current" part of the cap, e.g. V[k-1]*C/dt
+        i =  v * comp.c / the_timestep
+        # FIXME: charge-based version
+        # i = comp.q(v) / the_timestep - v * di_dv
     else:
         raise TypeError
 

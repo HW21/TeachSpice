@@ -1,4 +1,9 @@
+"""
+Solver Class(es)
+"""
+
 import numpy as np
+from typing import Dict, AnyStr, SupportsFloat
 
 
 class MnaSystem(object):
@@ -54,7 +59,7 @@ class MnaSystem(object):
 
 
 class Solver:
-    """ Newton-Raphson Solver """
+    """ Newton-Raphson Matrix Solver """
 
     def __init__(self, an, x0=None):
         self.an = an
@@ -88,7 +93,7 @@ class Solver:
         # self.update()
 
         # Newton iteration similarity
-        v_tol = 1e-9
+        v_tol = 1e-6
         v_diff = self.history[-1] - self.history[-2]
         if np.any(np.abs(v_diff) >= v_tol):
             return False
@@ -104,7 +109,7 @@ class Solver:
 
     def solve(self) -> np.ndarray:
         """ Compute the Newton-Raphson-based non-linear solution. """
-        max_iters = 100
+        max_iters = 500
 
         for i in range(max_iters):
             # print(f'Iter #{i} - Guessing {self.x}')
@@ -118,3 +123,63 @@ class Solver:
 
         # print(f'Successfully Converged to {self.x} in {i+1} iterations')
         return self.x
+
+
+class ScipySolver:
+    """ Solver based on scipy.optimize.minimize
+    The general idea is *minimizing* KCL error, rather than solving for when it equals zero.
+    To our knowledge, no other SPICE solver tries this.  Maybe it's a bad idea. """
+
+    def __init__(self, an, *, x0=None):
+        self.an = an
+        self.x0 = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(len(an.ckt.nodes))
+        self.x = self.x0
+        self.history = [self.x0]
+        self.results = []
+
+    def solve(self):
+        import scipy.optimize
+
+        options = dict(fatol=1e-31, disp=False)
+        result = scipy.optimize.minimize(fun=self.guess, x0=self.x0, method='nelder-mead', options=options)
+
+        if not result.success:
+            raise TabError(str(result))
+        # print(f'Solved: {result.x}')
+        return result.x
+
+    def get_v(self, comp) -> Dict[AnyStr, SupportsFloat]:
+        """ Get a dictionary of port-voltages, of the form `port_name`:`voltage`. """
+        v = {}
+        for name, node in comp.conns.items():
+            if node.solve:
+                v[name] = self.x[node.num]
+            else:
+                v[name] = self.an.ckt.forces[node]
+        return v
+
+    def guess(self, x):
+        # print(f'Guessing {x}')
+        self.x = x
+        self.history.append(x)
+        an = self.an
+        kcl_results = np.zeros(len(an.ckt.nodes))
+        for comp in an.ckt.comps:
+            comp_v = self.get_v(comp)
+            # print(f'{comp} has voltages {comp_v}')
+            comp_i = comp.i(comp_v)
+            # {d:1.3, s:=1.3, g:0, b:0}
+            for name, i in comp_i.items():
+                node = comp.conns[name]
+                if node.solve:
+                    # print(f'{comp} updating {node} by {i}')
+                    kcl_results[node.num] += i
+        # print(f'KCL: {kcl_results}')
+        rv = np.sum(kcl_results ** 2)
+        self.results.append(rv)
+        return rv
+
+
+""" 'Configuration' of which Solver to use """
+TheSolverCls = Solver
+# TheSolverCls = ScipySolver

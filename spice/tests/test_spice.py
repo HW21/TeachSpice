@@ -11,7 +11,7 @@ def rc_filter(c=1e-12, num_nodes=1):
 
             for k in range(num_nodes - 1):
                 self.create_comp(cls=Resistor,
-                                 r=(num_nodes - 1) * 1e3,
+                                 r=1e3,
                                  conns=dict(
                                      p=self.nodes[k + 1],
                                      n=self.nodes[k],
@@ -54,17 +54,15 @@ def sim(c=1e-12):
 def test_stuff():
     """ Run some sims!
     Sweep and plot a few RC parameters. """
-    import pandas as pd
     import matplotlib.pyplot as plt
 
-    def add_tran_plots(sim):
-        df = pd.DataFrame.from_records(sim.history)
-        # print(df)
-        plt.plot(df[0])
-        plt.plot(df[1])
+    def plot(s):
+        for node_num in range(len(s.history[0])):
+            sig = [h[node_num] for h in s.history]
+            plt.plot(sig)
 
-    for c in 1e-14, 1e-13, 1e-12:
+    for c in 1e-14, 1e-13, 0.5e-12:
         s = sim(c=c)
-        add_tran_plots(s)
+        plot(s)
 
-    # plt.show()
+    plt.show()
