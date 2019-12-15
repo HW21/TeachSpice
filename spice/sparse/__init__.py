@@ -1,13 +1,24 @@
-from typing import List, Optional
+from typing import Dict, List, Optional
+from enum import IntEnum, auto
 
 
 class Element(object):
-    def __init__(self, row: int, col: int, val: float):
+    def __init__(self, row: int, col: int, val: float, fillin: bool = False):
         self.row = row
         self.col = col
         self.val = val
+        self.fillin = fillin
         self.next_in_row = None
         self.next_in_col = None
+
+    def __eq__(self, other):
+        return self.row == other.row and self.col == other.col and self.val == other.val
+
+
+class MatrixState(IntEnum):
+    CREATED = auto()
+    FACTORING = auto()
+    FACTORED = auto()
 
 
 class SparseMatrix(object):
@@ -15,20 +26,34 @@ class SparseMatrix(object):
         self.rows: List[Optional[Element]] = [None]
         self.cols: List[Optional[Element]] = [None]
         self.diag: List[Optional[Element]] = [None]
+        self.state = MatrixState.CREATED
+
+    def elements(self):
+        """ Columns-first iterator of elements """
+        for c in self.cols:
+            while c is not None:
+                yield c
+                c = c.next_in_col
+
+    def __eq__(self, other):
+        if len(self.rows) != len(other.rows): return False
+        if len(self.cols) != len(other.cols): return False
+        # FIXME: means to check these lengths, without pulling all into memory
+        s = list(self.elements())
+        o = list(other.elements())
+        if len(s) != len(o): return False
+        for se, oe in zip(s, o):
+            if se != oe: return False
+        return True
 
     def get(self, row: int, col: int) -> Optional[Element]:
-        if row > len(self.rows) - 1:
-            return None
-        if col > len(self.cols) - 1:
-            return None
+        if row > len(self.rows) - 1: return None
+        if col > len(self.cols) - 1: return None
 
         # Easy access cases
-        if row == 0:
-            return self.cols[col]
-        if col == 0:
-            return self.rows[row]
-        # if row == col:
-        #     return self.diag[row]
+        if row == 0: return self.cols[col]
+        if col == 0: return self.rows[row]
+        # if row == col: return self.diag[row] # FIXME
 
         # Real search
         e = self.rows[row]
@@ -56,14 +81,15 @@ class SparseMatrix(object):
                 self.move_row(ey, x)
                 ey = ey.next_in_row
             else:
-                self.swap_elems_in_col(ex, ey)
+                self.exchange_col_elements(ex, ey)
                 ex = ex.next_in_row
                 ey = ey.next_in_row
 
         # Swap row-head pointers
         self.rows[x], self.rows[y] = self.rows[y], self.rows[x]
+        # FIXME: keep track of swaps for RHS
 
-    def above(self, e: Element, hint: Optional[Element] = None):
+    def above(self, e: Element, hint: Optional[Element] = None) -> Optional[Element]:
         """ Find the element above `e`.
         Optional hint provides an element that is as close as we know to right.
         If e is the first element in its column, or hint is e, returns None. """
@@ -77,7 +103,7 @@ class SparseMatrix(object):
         assert next is e
         return prev
 
-    def above_row(self, row: int, col: int, hint: Optional[Element] = None):
+    def above_row(self, row: int, col: int, hint: Optional[Element] = None) -> Optional[Element]:
         prev = hint or self.cols[col]
         if prev is None or prev.row >= row: return None
 
@@ -118,7 +144,7 @@ class SparseMatrix(object):
 
         e.row = row
 
-    def swap_elems_in_col(self, ex: Element, ey: Element):
+    def exchange_col_elements(self, ex: Element, ey: Element):
         """ Swap the rows of two elements in the same column """
         assert ex.col == ey.col
         assert ex.row < ey.row
@@ -207,6 +233,84 @@ class SparseMatrix(object):
 
         return e
 
+    def lu_factorize(self):
+        """ Updates self to S = L + U - I.
+        Diagonal entries are those of U;
+        L has diagonal entries equal to one. """
+        # FIXME: no pivoting/ swapping, yet
+
+        # Quick singularity check
+        # Each row & column must have entries
+        for e in self.cols:
+            if e is None: raise SingularMatrix
+        for e in self.rows:
+            if e is None: raise SingularMatrix
+
+        self.state = MatrixState.FACTORING
+        for pivot in self.diag:
+            self.row_col_elim(pivot)
+        self.state = MatrixState.FACTORED
+
+    def row_col_elim(self, pivot: Element):
+        """ Eliminate the row & column of element `pivot`,
+        transforming them into the LU-factored row/col of L and U. """
+        if pivot.val == 0: raise SingularMatrix
+
+        pupper = pivot.next_in_row
+        while pupper is not None:
+            plower = pivot.next_in_col
+            # pabove = pupper
+            psub = pupper.next_in_col
+            while plower is not None:
+                # row = plower.row
+                # val = plower.val
+                plower.val /= pivot.val
+                while psub is not None and psub.row < plower.row:
+                    # pabove = psub
+                    psub = psub.next_in_col
+                if psub is None or psub.row > plower.row:
+                    psub = self.add_element(row=plower.row, col=pupper.col, val=0.0, fillin=True)
+
+                psub.val -= pupper.val * plower.val
+                psub = psub.next_in_col
+                plower = plower.next_in_col
+            pupper = pupper.next_in_row
+
+    def solve(self, rhs: Dict[int, float]):
+        """ Complete forward & backward substitution
+        Generally described as breaking Ax = LUx = b down into
+        Lc = b, Ux = c """
+        assert self.state == MatrixState.FACTORED
+
+        # Collect a sparse rhs into a dense list
+        c = [0.0] * len(self.cols)
+        for r, v in rhs.items(): c[r] = v
+
+        # Forward substitution: Lc=b
+        for d in self.diag:
+            # Walk down each column, update c
+            if c[d.row] == 0:  # No updates to make on this iteration
+                continue
+            # c[d.row] /= d.val
+            e = d.next_in_col
+            while e is not None:
+                c[e.row] -= c[d.row] * e.val
+                e = e.next_in_col
+
+        # Backward substitution: Ux=c
+        for d in self.diag[::-1]:
+            # Walk each row, update c
+            e = d.next_in_row
+            while e is not None:
+                c[e.row] -= c[e.col] * e.val
+                e = e.next_in_row
+            c[d.row] /= d.val
+
+        return c
+
     def add_element(self, *args, **kwargs):
         e = Element(*args, **kwargs)
         return self.insert(e)
+
+
+class SingularMatrix(Exception): pass
