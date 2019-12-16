@@ -1,5 +1,5 @@
 import pytest
-from ..matrix import Element, SparseMatrix, MatrixError
+from ..matrix import Element, SparseMatrix, MatrixError, MatrixState
 
 
 def test_create_element():
@@ -50,10 +50,16 @@ def test_get():
 
 def test_swap_rows():
     m = SparseMatrix()
+
     m.add_element(0, 0, 11.0)
     m.add_element(7, 0, 22.0)
     m.add_element(0, 7, 33.0)
     m.add_element(7, 7, 44.0)
+
+    # Fake-set the FACTORING state
+    m.state = MatrixState.FACTORING
+    m.rowmap_e2i = list(range(len(m.rows)))
+    m.rowmap_i2e = list(range(len(m.rows)))
 
     m.swap_rows(0, 7)
 
@@ -65,6 +71,7 @@ def test_swap_rows():
     assert e.val == 44.0
 
     m = SparseMatrix()
+
     m.add_element(0, 0, 1)
     m.add_element(0, 1, 2)
     m.add_element(0, 2, 3)
@@ -74,6 +81,11 @@ def test_swap_rows():
     m.add_element(2, 0, 7)
     m.add_element(2, 1, 8)
     m.add_element(2, 2, 9)
+
+    # Fake-set the FACTORING state
+    m.state = MatrixState.FACTORING
+    m.rowmap_e2i = list(range(len(m.rows)))
+    m.rowmap_i2e = list(range(len(m.rows)))
 
     m.swap_rows(0, 2)
     e = m.get(0, 0)
@@ -85,11 +97,33 @@ def test_swap_rows():
     m.add_element(2, 0, -11)
     m.add_element(2, 2, 99)
 
+    # Fake-set the FACTORING state
+    m.state = MatrixState.FACTORING
+    m.rowmap_e2i = list(range(len(m.rows)))
+    m.rowmap_i2e = list(range(len(m.rows)))
+
     m.swap_rows(0, 2)
 
     e = m.get(0, 0)
     assert e is not None
     assert e.val == -11
+
+
+def test_row_mappings():
+    m = SparseMatrix.identity(4)
+
+    # Fake-set the FACTORING state
+    m.state = MatrixState.FACTORING
+    m.rowmap_e2i = list(range(len(m.rows)))
+    m.rowmap_i2e = list(range(len(m.rows)))
+
+    m.swap_rows(0, 3)
+    assert m.rowmap_e2i == [3, 1, 2, 0]
+    assert m.rowmap_i2e == [3, 1, 2, 0]
+
+    m.swap_rows(0, 2)
+    assert m.rowmap_e2i == [3, 1, 0, 2]
+    assert m.rowmap_i2e == [2, 1, 3, 0]
 
 
 def test_eq():
@@ -157,6 +191,39 @@ def test_lu_lower():
     assert e.val == 1.0
 
 
+def test_swap():
+    m = SparseMatrix()
+    m.add_element(0, 0, 1.0)
+    m.add_element(0, 1, 1.0)
+    m.add_element(0, 2, 1.0)
+    m.add_element(1, 1, 2.0)
+    m.add_element(1, 2, 5.0)
+    m.add_element(2, 0, 2.0)
+    m.add_element(2, 1, 5.0)
+    m.add_element(2, 2, -1.0)
+
+    # Fake-set the FACTORING state
+    m.state = MatrixState.FACTORING
+    m.rowmap_e2i = list(range(len(m.rows)))
+    m.rowmap_i2e = list(range(len(m.rows)))
+
+    m.swap_rows(0, 2)
+
+    e1 = m.get(0, 0)
+    assert e1.val == 2.0
+    e2 = m.get(2, 0)
+    assert e2.val == 1.0
+    assert e1.next_in_col is e2
+    assert e2.next_in_col is None
+
+    e01 = m.get(0, 1)
+    e11 = m.get(1, 1)
+    e21 = m.get(2, 1)
+    assert e01.next_in_col is e11
+    assert e11.next_in_col is e21
+    assert e21.next_in_col is None
+
+
 def test_lu():
     m = SparseMatrix()
     m.add_element(0, 0, 1.0)
@@ -177,6 +244,7 @@ def test_lu():
 
 def test_solve():
     m = SparseMatrix()
+
     m.add_element(0, 0, 1.0)
     m.add_element(0, 1, 1.0)
     m.add_element(0, 2, 1.0)
@@ -187,8 +255,14 @@ def test_solve():
     m.add_element(2, 2, -1.0)
 
     check_diagonal(m)
+    m2 = m.copy()
+
     m.lu_factorize()
     check_diagonal(m)
+
+    l, u = m.extract_lu()
+    m3 = l.matmul(u)
+    print(m3)
 
     c = m.solve(rhs={0: 6, 1: -4, 2: 27})
     assert c == [5, 3, -2]

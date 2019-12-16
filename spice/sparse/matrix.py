@@ -1,4 +1,4 @@
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Tuple, Union, Optional
 from enum import IntEnum, auto
 
 
@@ -14,6 +14,9 @@ class Element(object):
     def __eq__(self, other):
         return self.row == other.row and self.col == other.col and self.val == other.val
 
+    def __repr__(self):
+        return f"<{self.__class__.__name__}(row={self.row}, col={self.col}, val={self.val}, id={id(self)})>"
+
 
 class MatrixState(IntEnum):
     CREATED = auto()
@@ -23,10 +26,14 @@ class MatrixState(IntEnum):
 
 class SparseMatrix(object):
     def __init__(self):
+        self.state = MatrixState.CREATED
         self.rows: List[Optional[Element]] = [None]
         self.cols: List[Optional[Element]] = [None]
         self.diag: List[Optional[Element]] = [None]
-        self.state = MatrixState.CREATED
+        self.fillins: List[Element] = []
+        self.rowmap_i2e: Optional[List[int]] = None
+        self.rowmap_e2i: Optional[List[int]] = None
+        self.row_swap_history: List[Tuple[float, float]] = []
 
     def elements(self):
         """ Columns-first iterator of elements """
@@ -47,6 +54,9 @@ class SparseMatrix(object):
         return True
 
     def get(self, row: int, col: int) -> Optional[Element]:
+        """ Get the element at (row,col), or None if no element present """
+        if row < 0: return None
+        if col < 0: return None
         if row > len(self.rows) - 1: return None
         if col > len(self.cols) - 1: return None
 
@@ -85,9 +95,14 @@ class SparseMatrix(object):
                 ex = ex.next_in_row
                 ey = ey.next_in_row
 
-        # Swap row-head pointers
+        # Swap row-header pointers
         self.rows[x], self.rows[y] = self.rows[y], self.rows[x]
-        # FIXME: keep track of swaps for RHS
+
+        # Make updates to our row-mappings
+        self.row_swap_history.append((x, y))
+        self.rowmap_i2e[x], self.rowmap_i2e[y] = self.rowmap_i2e[y], self.rowmap_i2e[x]
+        self.rowmap_e2i[self.rowmap_i2e[x]] = x
+        self.rowmap_e2i[self.rowmap_i2e[y]] = y
 
     def above(self, e: Element, hint: Optional[Element] = None) -> Optional[Element]:
         """ Find the element above `e`.
@@ -143,45 +158,33 @@ class SparseMatrix(object):
                 br.next_in_col = e
 
         e.row = row
+        if e.row == e.col: self.diag[e.row] = e
 
     def exchange_col_elements(self, ex: Element, ey: Element):
         """ Swap the rows of two elements in the same column """
         assert ex.col == ey.col
         assert ex.row < ey.row
-        bx = self.cols[ex.col]
-        assert bx is not None
 
-        if bx is not ex:
-            # Find element before `ex` in the column
-            next = bx.next_in_col
-            while next is not None and next.row < ex.row:
-                bx = next
-                next = next.next_in_col
-            assert next is ex
-
-        # Now carry along to find the element before `ey`
-        by = ex
-        next = by.next_in_col
-        while next is not None and next.row < ey.row:
-            by = next
-            next = next.next_in_col
-        assert next is ey
-
-        # At this point,
-        # * bx is either the element before ex, or ex itself
-        # * by is the element before ey, which may be ex
-        # Get it?
+        # Find the elements before each of `ex` and `ey`.
+        bx = self.above(ex)
+        by = self.above(ey, hint=ex)
 
         # Now we can get to swappin.
-        if bx is ex:  # If `ex` is the *first* entry in the column, replace it to our list
+        ex.row, ey.row = ey.row, ex.row
+
+        if bx is None:  # If `ex` is the *first* entry in the column, replace it to our header-list
             self.cols[ex.col] = ey
         else:  # Otherwise patch ey into bx
             bx.next_in_col = ey
-        if by is not ex:  # If there are any elements in-between `ex` and `ey`, update the last one
+
+        if by is ex:  # `ex` and `ey` are adjacent
+            ey.next_in_col, ex.next_in_col = ex, ey.next_in_col
+        else:  # Elements in-between `ex` and `ey`.  Update the last one.
+            ey.next_in_col, ex.next_in_col = ex.next_in_col, ey.next_in_col
             by.next_in_col = ex
 
-        ex.next_in_col, ey.next_in_col = ey.next_in_col, ex.next_in_col
-        ex.row, ey.row = ey.row, ex.row
+        if ex.row == ex.col: self.diag[ex.row] = ex
+        if ey.row == ey.col: self.diag[ey.row] = ey
 
     def insert(self, e: Element) -> Element:
         expanded = False
@@ -196,6 +199,8 @@ class SparseMatrix(object):
             self.diag.extend([None] * (new_diag_len - len(self.diag)))
         if e.row == e.col:
             self.diag[e.col] = e
+        if e.fillin:
+            self.fillins.append(e)
 
         # Insert into the col
         col_head = self.cols[e.col]
@@ -247,14 +252,37 @@ class SparseMatrix(object):
             if e is None: raise SingularMatrix
 
         self.state = MatrixState.FACTORING
-        for pivot in self.diag:
+
+        # Set up row-swap mappings
+        self.rowmap_e2i = list(range(len(self.rows)))
+        self.rowmap_i2e = list(range(len(self.rows)))
+
+        for d in self.diag[:-1]:
+            pivot = self.find_max_below(d)
+            self.swap_rows(pivot.row, d.row)
             self.row_col_elim(pivot)
         self.state = MatrixState.FACTORED
 
+    def find_max_below(self, below: Element):
+        """ Find the max in-column value at or below Element `e` """
+        e = max_elem = below
+        while e is not None:
+            if abs(e.val) > abs(max_elem.val):
+                max_elem = e
+            e = e.next_in_col
+        return max_elem
+
     def row_col_elim(self, pivot: Element):
         """ Eliminate the row & column of element `pivot`,
-        transforming them into the LU-factored row/col of L and U. """
+        transforming them into the LU-factored row/col of L and U.
+        Uses Gauss's algorithm, without any fancy tricks applied. """
         if pivot.val == 0: raise SingularMatrix
+
+        # Divide the pivot-column entries by the pivot-value
+        plower = pivot.next_in_col
+        while plower is not None:
+            plower.val /= pivot.val
+            plower = plower.next_in_col
 
         pupper = pivot.next_in_row
         while pupper is not None:
@@ -262,9 +290,7 @@ class SparseMatrix(object):
             # pabove = pupper
             psub = pupper.next_in_col
             while plower is not None:
-                # row = plower.row
-                # val = plower.val
-                plower.val /= pivot.val
+
                 while psub is not None and psub.row < plower.row:
                     # pabove = psub
                     psub = psub.next_in_col
@@ -282,13 +308,16 @@ class SparseMatrix(object):
         Lc = b, Ux = c """
         assert self.state == MatrixState.FACTORED
 
+        c = [0.0] * len(self.rows)
         if isinstance(rhs, list):
             assert len(rhs) == len(self.rows), f'Invalid rhs: length {len(rhs)} for matrix size {len(self.rows)}'
             c = rhs
+            for n, v in enumerate(rhs):
+                c[self.rowmap_e2i[n]] = v
         else:  # Collect a sparse rhs into a solution-list
-            c = [0.0] * len(self.rows)
             if rhs is not None:
-                for r, v in rhs.items(): c[r] = v
+                for r, v in rhs.items():
+                    c[self.rowmap_e2i[r]] = v
 
         # Forward substitution: Lc=b
         for d in self.diag:
