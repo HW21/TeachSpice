@@ -6,7 +6,7 @@ def yaml_testcases():
     """ Run all YAML matrices in data/ dir """
 
     results = []
-    for p in Path("data/").glob("*.yaml"):
+    for p in Path("data/").glob("mat6*.yaml"):
         print(f"Running Test-Case {p.name}")
 
         res = dict(
@@ -54,6 +54,23 @@ def yaml_testcases():
             else:
                 print(f"Incorrect Solution: {x}")
                 print(f"Solution (from YAML): {y.solution}")
+
+        try:  # Check by multiplying with our calculated solution
+            y = MatrixYaml.load(p)
+            m2 = y.to_mat()
+            z = m2.mult(x)
+        except Exception as e:
+            print(e)
+            continue
+        else:
+            match = z == y.rhs
+            res['mult'] = match
+
+            if match:
+                print(f"Mult-back matched RHS: {p.name}")
+            else:
+                print(f"Mult-back yield incorrect: {x}")
+                print(f"Correct RHS: {y.rhs}")
 
     print(f"{'File'.ljust(30)}Read   Factor Solve  Correct")
 

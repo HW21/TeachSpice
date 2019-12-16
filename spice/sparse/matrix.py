@@ -51,16 +51,16 @@ class SparseMatrix(object):
         if col > len(self.cols) - 1: return None
 
         # Easy access cases
-        if row == 0: return self.cols[col]
-        if col == 0: return self.rows[row]
         # if row == col: return self.diag[row] # FIXME
 
         # Real search
         e = self.rows[row]
         while e is not None and e.col < col:
             e = e.next_in_row
-        if e is None or e.row != row:
+        if e is None or e.col != col:
             return None
+        assert e.row == row
+        assert e.col == col
         return e
 
     def swap_rows(self, x: int, y: int):
@@ -285,7 +285,7 @@ class SparseMatrix(object):
         if isinstance(rhs, list):
             assert len(rhs) == len(self.rows), f'Invalid rhs: length {len(rhs)} for matrix size {len(self.rows)}'
             c = rhs
-        else: # Collect a sparse rhs into a solution-list
+        else:  # Collect a sparse rhs into a solution-list
             c = [0.0] * len(self.rows)
             if rhs is not None:
                 for r, v in rhs.items(): c[r] = v
@@ -312,9 +312,94 @@ class SparseMatrix(object):
 
         return c
 
+    def matmul(self, other):
+        """ Matrix multiplication self*other """
+        if len(self.rows) != len(other.cols):
+            raise MatrixDimError
+
+        m = SparseMatrix()
+        for (row, re) in enumerate(self.rows):
+            for (col, ce) in enumerate(other.cols):
+                val = 0
+
+                # "Two pointer" row * col dot-product
+                while re is not None and ce is not None:
+                    if ce is None or re.col < ce.row:
+                        re = re.next_in_row
+                    elif ce.row < re.col:
+                        ce = ce.next_in_col
+                    else:  # re.col == ce.row
+                        val += re.val * ce.val
+                        re = re.next_in_row
+                        ce = ce.next_in_col
+
+                if val != 0:
+                    m.add_element(row, col, val)
+
+        return m
+
+    def mult(self, rhs):
+        """ Multiply with a column vector """
+        if isinstance(rhs, list):
+            if len(rhs) != len(self.cols):
+                raise MatrixDimError(f'Invalid rhs: length {len(rhs)} for matrix size {len(self.rows)}')
+            x = rhs
+        else:  # Collect a sparse rhs into a solution-list
+            x = [0.0] * len(self.cols)
+            if rhs is not None:
+                for r, v in rhs.items(): x[r] = v
+
+        y = [0.0] * len(self.rows)
+        for (row, e) in enumerate(self.rows):
+            while e is not None:
+                y[row] += e.val * x[e.col]
+                e = e.next_in_row
+
+        return y
+
+    def extract_lu(self):
+        """ Return two-tuple (L,U) of matrices from factored `self` """
+        assert self.state == MatrixState.FACTORED
+
+        l = SparseMatrix()
+        for e in self.diag:
+            # L has unit-entries along its diagonal
+            l.add_element(e.row, e.col, 1.0)
+            while e.next_in_col is not None:
+                e = e.next_in_col
+                l.add_element(e.row, e.col, e.val)
+
+        u = SparseMatrix()
+        for e in self.diag:
+            while e is not None:
+                u.add_element(e.row, e.col, e.val)
+                e = e.next_in_row
+
+        return (l, u)
+
+    def copy(self):
+        """ Create an element-by-element copy """
+        cp = SparseMatrix()
+        for e in self.elements():
+            cp.add_element(e.row, e.col, e.val)
+        return cp
+
     def add_element(self, *args, **kwargs):
         e = Element(*args, **kwargs)
         return self.insert(e)
 
+    @classmethod
+    def identity(cls, n: int):
+        m = SparseMatrix()
+        for k in range(n):
+            m.add_element(k, k, 1.0)
+        return m
 
-class SingularMatrix(Exception): pass
+
+class MatrixError(Exception): pass
+
+
+class MatrixDimError(MatrixError): pass
+
+
+class SingularMatrix(MatrixError): pass

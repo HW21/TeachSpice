@@ -1,4 +1,5 @@
-from .. import Element, SparseMatrix
+import pytest
+from ..matrix import Element, SparseMatrix, MatrixError
 
 
 def test_create_element():
@@ -199,3 +200,52 @@ def check_diagonal(m: SparseMatrix):
     for r in range(len(m.diag)):
         e = m.get(r, r)
         assert e is m.diag[r]
+
+
+def test_identity():
+    i2 = SparseMatrix.identity(2)
+    assert len(i2.rows) == 2
+    assert len(i2.cols) == 2
+    e = i2.get(0, 0)
+    assert e.val == 1
+    assert i2.diag[0] is e
+    assert e.next_in_col is None
+    assert e.next_in_row is None
+    e = i2.get(1, 1)
+    assert e.val == 1
+
+
+def test_mult():
+    i3 = SparseMatrix.identity(3)
+    y = i3.mult([3, 4, 5])
+    assert y == [3, 4, 5]
+
+    with pytest.raises(MatrixError):
+        i3.mult([6, 7, 8, 9])
+
+
+def test_extract_lu():
+    i4 = SparseMatrix.identity(4)
+    i4.lu_factorize()
+    l, u = i4.extract_lu()
+    assert l == i4
+    assert u == i4
+
+
+def test_copy():
+    i9 = SparseMatrix.identity(9)
+    cp = i9.copy()
+    assert cp == i9
+    assert cp is not i9
+
+
+def test_matmul():
+    i5a = SparseMatrix.identity(5)
+    i5b = SparseMatrix.identity(5)
+    assert i5a == i5b
+    assert i5a is not i5b
+    i5c = i5a.matmul(i5b)
+    assert i5a == i5c
+    assert i5a is not i5c
+    assert i5b == i5c
+    assert i5b is not i5c
