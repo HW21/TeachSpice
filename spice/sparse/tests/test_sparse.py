@@ -1,5 +1,5 @@
 import pytest
-from ..matrix import Element, SparseMatrix, MatrixError, MatrixState
+from ..matrix import Element, SparseMatrix, MatrixError, MatrixState, Axis
 
 
 def test_create_element():
@@ -56,10 +56,7 @@ def test_swap_rows():
     m.add_element(0, 7, 33.0)
     m.add_element(7, 7, 44.0)
 
-    # Fake-set the FACTORING state
-    m.state = MatrixState.FACTORING
-    m.rowmap_e2i = list(range(len(m.rows)))
-    m.rowmap_i2e = list(range(len(m.rows)))
+    m.set_state(MatrixState.FACTORING)
 
     m.swap_rows(0, 7)
 
@@ -70,6 +67,75 @@ def test_swap_rows():
     assert e is not None
     assert e.val == 44.0
 
+
+def test_swap_cols():
+    m = SparseMatrix()
+
+    m.add_element(0, 0, 11.0)
+    m.add_element(7, 0, 22.0)
+    m.add_element(0, 3, -1)
+    m.add_element(3, 3, -2)
+    m.add_element(7, 3, -3)
+    m.add_element(0, 7, 33.0)
+    m.add_element(7, 7, 44.0)
+
+    m.set_state(MatrixState.FACTORING)
+
+    assert list(m.values()) == [11, 22, -1, -2, -3, 33, 44]
+    m.swap(Axis.cols, 0, 7)
+    assert list(m.values()) == [33, 44, -1, -2, -3, 11, 22]
+
+    e00 = m.get(0, 0)
+    e03 = m.get(0, 3)
+    e33 = m.get(3, 3)
+    e73 = m.get(7, 3)
+    e07 = m.get(0, 7)
+    e70 = m.get(7, 0)
+    e77 = m.get(7, 7)
+
+    assert e00 is not None
+    assert e00.val == 33.0
+    assert e00.next_in_col is e70
+    assert e00.next_in_row is e03
+
+    assert e03 is not None
+    assert e03.val == -1.0
+    assert e03.next_in_col is e33
+    assert e03.next_in_row is e07
+
+    assert e33 is not None
+    assert e33.val == -2.0
+    assert e33.next_in_col is e73
+    assert e33.next_in_row is None
+
+    assert e73 is not None
+    assert e73.val == -3.0
+    assert e73.next_in_col is None
+    assert e73.next_in_row is e77
+
+    assert e07 is not None
+    assert e07.val == 11.0
+    assert e07.next_in_col is e77
+    assert e07.next_in_row is None
+
+    assert e70 is not None
+    assert e70.val == 44.0
+    assert e70.next_in_col is None
+    assert e70.next_in_row is e73
+
+    assert e77 is not None
+    assert e77.val == 22.0
+    assert e77.next_in_col is None
+    assert e77.next_in_row is None
+
+    m.swap_cols(0, 7)
+    assert list(m.values()) == [11, 22, -1, -2, -3, 33, 44]
+
+    m.swap_cols(0, 7)
+    assert list(m.values()) == [33, 44, -1, -2, -3, 11, 22]
+
+
+def test_swap_rows2():
     m = SparseMatrix()
 
     m.add_element(0, 0, 1)
@@ -82,25 +148,22 @@ def test_swap_rows():
     m.add_element(2, 1, 8)
     m.add_element(2, 2, 9)
 
-    # Fake-set the FACTORING state
-    m.state = MatrixState.FACTORING
-    m.rowmap_e2i = list(range(len(m.rows)))
-    m.rowmap_i2e = list(range(len(m.rows)))
+    m.set_state(MatrixState.FACTORING)
 
     m.swap_rows(0, 2)
     e = m.get(0, 0)
     assert e is not None
     assert e.val == 7.0
 
+
+def test_swap_rows3():
     m = SparseMatrix()
     m.add_element(1, 0, 71)
     m.add_element(2, 0, -11)
     m.add_element(2, 2, 99)
 
     # Fake-set the FACTORING state
-    m.state = MatrixState.FACTORING
-    m.rowmap_e2i = list(range(len(m.rows)))
-    m.rowmap_i2e = list(range(len(m.rows)))
+    m.set_state(MatrixState.FACTORING)
 
     m.swap_rows(0, 2)
 
@@ -111,19 +174,15 @@ def test_swap_rows():
 
 def test_row_mappings():
     m = SparseMatrix.identity(4)
-
-    # Fake-set the FACTORING state
-    m.state = MatrixState.FACTORING
-    m.rowmap_e2i = list(range(len(m.rows)))
-    m.rowmap_i2e = list(range(len(m.rows)))
+    m.set_state(MatrixState.FACTORING)
 
     m.swap_rows(0, 3)
-    assert m.rowmap_e2i == [3, 1, 2, 0]
-    assert m.rowmap_i2e == [3, 1, 2, 0]
+    assert m.mappings[Axis.rows].e2i == [3, 1, 2, 0]
+    assert m.mappings[Axis.rows].i2e == [3, 1, 2, 0]
 
     m.swap_rows(0, 2)
-    assert m.rowmap_e2i == [3, 1, 0, 2]
-    assert m.rowmap_i2e == [2, 1, 3, 0]
+    assert m.mappings[Axis.rows].e2i == [3, 1, 0, 2]
+    assert m.mappings[Axis.rows].i2e == [2, 1, 3, 0]
 
 
 def test_eq():
@@ -145,7 +204,9 @@ def test_eq():
     m2.add_element(2, 2, 1.0)
     m2.add_element(3, 3, 1.0)
 
+    assert m == m1
     assert m != m2
+    assert m1 != m2
 
 
 def test_lu_id3():
@@ -202,10 +263,7 @@ def test_swap():
     m.add_element(2, 1, 5.0)
     m.add_element(2, 2, -1.0)
 
-    # Fake-set the FACTORING state
-    m.state = MatrixState.FACTORING
-    m.rowmap_e2i = list(range(len(m.rows)))
-    m.rowmap_i2e = list(range(len(m.rows)))
+    m.set_state(MatrixState.FACTORING)
 
     m.swap_rows(0, 2)
 

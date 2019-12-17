@@ -1,5 +1,44 @@
 from typing import Dict, List, Tuple, Union, Optional
-from enum import IntEnum, auto
+from enum import Enum, IntEnum, auto
+
+
+class Axis(Enum):
+    rows = auto()
+    cols = auto()
+
+    def __invert__(self):
+        if self is Axis.rows: return Axis.cols
+        if self is Axis.cols: return Axis.rows
+        raise ValueError
+
+
+class Dir(Enum):
+    down = auto()
+    left = auto()
+
+
+class MatrixState(IntEnum):
+    CREATED = auto()
+    FACTORING = auto()
+    FACTORED = auto()
+
+
+class AxisMapping(object):
+    """ Two-vector object to help keep track of index swaps.
+    Converts bi-directionally in constant time by keeping two vectors,
+    `internal to external` and `external to internal`. """
+
+    def __init__(self, size: int):
+        self.e2i = list(range(size))
+        self.i2e = list(range(size))
+        self.history = []
+
+    def swap_int(self, x: int, y: int):
+        """ Swap internal indices x and y """
+        self.i2e[x], self.i2e[y] = self.i2e[y], self.i2e[x]
+        self.e2i[self.i2e[x]] = x
+        self.e2i[self.i2e[y]] = y
+        self.history.append((x, y))
 
 
 class Element(object):
@@ -17,11 +56,31 @@ class Element(object):
     def __repr__(self):
         return f"<{self.__class__.__name__}(row={self.row}, col={self.col}, val={self.val}, id={id(self)})>"
 
+    def index(self, ax: Axis):
+        if ax is Axis.rows: return self.row
+        if ax is Axis.cols: return self.col
+        raise ValueError
 
-class MatrixState(IntEnum):
-    CREATED = auto()
-    FACTORING = auto()
-    FACTORED = auto()
+    def set_index(self, ax: Axis, x: int):
+        if ax is Axis.rows:
+            self.row = x
+        elif ax is Axis.cols:
+            self.col = x
+        else:
+            raise ValueError
+
+    def next(self, ax: Axis):
+        if ax is Axis.rows: return self.next_in_row
+        if ax is Axis.cols: return self.next_in_col
+        raise ValueError
+
+    def set_next(self, ax: Axis, e: Optional["Element"]):
+        if ax is Axis.rows:
+            self.next_in_row = e
+        elif ax is Axis.cols:
+            self.next_in_col = e
+        else:
+            raise ValueError
 
 
 class SparseMatrix(object):
@@ -31,9 +90,7 @@ class SparseMatrix(object):
         self.cols: List[Optional[Element]] = [None]
         self.diag: List[Optional[Element]] = [None]
         self.fillins: List[Element] = []
-        self.rowmap_i2e: Optional[List[int]] = None
-        self.rowmap_e2i: Optional[List[int]] = None
-        self.row_swap_history: List[Tuple[float, float]] = []
+        self.mappings: Optional[Dict[Axis, AxisMapping]] = None
 
     def elements(self):
         """ Columns-first iterator of elements """
@@ -41,6 +98,10 @@ class SparseMatrix(object):
             while c is not None:
                 yield c
                 c = c.next_in_col
+
+    def values(self):
+        """ Columns-first iterator of element values"""
+        for e in self.elements(): yield e.val
 
     def __eq__(self, other):
         if len(self.rows) != len(other.rows): return False
@@ -61,7 +122,7 @@ class SparseMatrix(object):
         if col > len(self.cols) - 1: return None
 
         # Easy access cases
-        # if row == col: return self.diag[row] # FIXME
+        if row == col: return self.diag[row]
 
         # Real search
         e = self.rows[row]
@@ -73,7 +134,127 @@ class SparseMatrix(object):
         assert e.col == col
         return e
 
+    def hdrs(self, axis: Axis):
+        """ Return the axis-header array for either rows or columns. """
+        assert isinstance(axis, Axis)
+        if axis is Axis.rows: return self.rows
+        if axis is Axis.cols: return self.cols
+        raise ValueError
+
+    def move(self, ax: Axis, e: Element, to: int):
+        """ Move element `e` to index `to` on axis `ax`, updating pointers accordingly.
+        There must not be an existing element in-place.
+        However there may or may not be entries above or below `to` and/or `e`. """
+
+        # Extract element coordinates, in-axis and off-axis
+        off_ax = ~ax
+        idx, y = e.index(ax), e.index(off_ax)
+        if idx == to: return
+
+        if idx < to:  # Search for element first
+            be = self.prev(off_ax, e)
+            br = self.before_index(ax=off_ax, index=y, before=to, hint=e)
+        else:  # Search for row first
+            br = self.before_index(ax=off_ax, index=y, before=to)
+            be = self.prev(off_ax, e, hint=br)
+
+        # Things that (may) need to happen:
+        # * "Short" over `e` from `be` to `e.next`
+        # * Splice `e` in after `br`, or
+        # * Update column-header
+
+        if br is not be:  # If we (may) need some pointer updates
+            if be is not None:  # Short-circuit over `e`
+                be.set_next(off_ax, e.next(off_ax))
+
+            if br is None:  # New first in column
+                first = self.hdrs(off_ax)[y]
+                e.set_next(off_ax, first)
+                self.hdrs(off_ax)[y] = e
+            elif br is not e:  # Splice `e` in after `br`
+                e.set_next(off_ax, br.next(off_ax))
+                br.set_next(off_ax, e)
+
+        e.set_index(ax, to)
+        if e.row == e.col: self.diag[e.row] = e
+
+    def exchange_elements(self, ax: Axis, ex: Element, ey: Element):
+        """ Swap two elements `ax` indices.
+        Elements must be in the same off-axis vector,
+        and the first argument `ex` must be the lower-indexed off-axis.
+        E.g. exchange_elements(Axis.rows, ex, ey) exchanges the rows of ex and ey. """
+
+        off_ax = ~ax
+        assert ex.index(off_ax) == ey.index(off_ax)
+        off_idx = ey.index(off_ax)
+        assert ex.index(ax) < ey.index(ax)
+
+        # Find the elements before each of `ex` and `ey`.
+        bx = self.prev(off_ax, ex)
+        by = self.prev(off_ax, ey, hint=ex)
+
+        # Now we can get to swappin.
+        tmp = ex.index(ax)
+        ex.set_index(ax, ey.index(ax))
+        ey.set_index(ax, tmp)
+
+        if bx is None:  # If `ex` is the *first* entry in the column, replace it to our header-list
+            self.hdrs(off_ax)[off_idx] = ey
+        else:  # Otherwise patch ey into bx
+            bx.set_next(off_ax, ey)
+
+        if by is ex:  # `ex` and `ey` are adjacent
+            tmp = ey.next(off_ax)
+            ey.set_next(off_ax, ex)
+            ex.set_next(off_ax, tmp)
+        else:  # Elements in-between `ex` and `ey`.  Update the last one.
+            tmp = ey.next(off_ax)
+            ey.set_next(off_ax, ex.next(off_ax))
+            ex.set_next(off_ax, tmp)
+            by.set_next(off_ax, ex)
+
+        if ex.row == ex.col: self.diag[ex.row] = ex
+        if ey.row == ey.col: self.diag[ey.row] = ey
+
+    def swap(self, axis: Axis, x: int, y: int):
+        """ Swap either two rows or two columns, indexed `x` and `y`.
+        Enum argument `axis` dictates whether to swap rows or cols. """
+        if x == y: return
+        if y < x: x, y = y, x
+
+        ax_hdrs = self.hdrs(axis)
+        ex = ax_hdrs[x]
+        ey = ax_hdrs[y]
+
+        while ex is not None or ey is not None:
+            if ex is None:
+                self.move(axis, ey, x)
+                ey = ey.next(axis)
+            elif ey is None or ex.index(~axis) < ey.index(~axis):
+                self.move(axis, ex, y)
+                ex = ex.next(axis)
+            elif ey.index(~axis) < ex.index(~axis):
+                self.move(axis, ey, x)
+                ey = ey.next(axis)
+            else:
+                self.exchange_elements(axis, ex, ey)
+                ex = ex.next(axis)
+                ey = ey.next(axis)
+
+        # Swap row-header pointers
+        ax_hdrs[x], ax_hdrs[y] = ax_hdrs[y], ax_hdrs[x]
+
+        # Make updates to our row-mappings
+        self.mappings[axis].swap_int(x, y)
+
+    def swap_cols(self, x: int, y: int):
+        return self.swap(axis=Axis.cols, x=x, y=y)
+
     def swap_rows(self, x: int, y: int):
+        return self.swap(axis=Axis.rows, x=x, y=y)
+
+    def _swap_rows_deprecated(self, x: int, y: int):
+        """ Hard-coded to `rows`/`cols edition """
         if x == y: return
         if y < x: x, y = y, x
 
@@ -99,10 +280,25 @@ class SparseMatrix(object):
         self.rows[x], self.rows[y] = self.rows[y], self.rows[x]
 
         # Make updates to our row-mappings
-        self.row_swap_history.append((x, y))
-        self.rowmap_i2e[x], self.rowmap_i2e[y] = self.rowmap_i2e[y], self.rowmap_i2e[x]
-        self.rowmap_e2i[self.rowmap_i2e[x]] = x
-        self.rowmap_e2i[self.rowmap_i2e[y]] = y
+        self.mappings[Axis.rows].swap_int(x, y)
+        # self.row_swap_history.append((x, y))
+        # self.rowmap_i2e[x], self.rowmap_i2e[y] = self.rowmap_i2e[y], self.rowmap_i2e[x]
+        # self.rowmap_e2i[self.rowmap_i2e[x]] = x
+        # self.rowmap_e2i[self.rowmap_i2e[y]] = y
+
+    def prev(self, ax: Axis, e: Element, hint: Optional[Element] = None) -> Optional[Element]:
+        """ Find the element before `e`, in direction `ax`.
+        Optional hint provides an element that is as close as we know to right.
+        If e is the first element in this axis, or hint is e, returns None. """
+        prev = hint or self.hdrs(ax)[e.index(ax)]
+        if prev is None or prev is e: return None
+
+        nxt = prev.next(ax)
+        while nxt is not None and nxt is not e:
+            prev = nxt
+            nxt = nxt.next(ax)
+        assert nxt is e
+        return prev
 
     def above(self, e: Element, hint: Optional[Element] = None) -> Optional[Element]:
         """ Find the element above `e`.
@@ -116,6 +312,21 @@ class SparseMatrix(object):
             prev = next
             next = next.next_in_col
         assert next is e
+        return prev
+
+    def before_index(self, ax: Axis, index: int, before: int, hint: Optional[Element] = None) -> Optional[Element]:
+        """ Find the last element in Axis `ax`, index `index`, before (off-axis) index `before`.
+        E.g. before_index(Axis.cols, 3, 7) would be the element in column 3 before row 7.
+        Optional `hint` is an element *known* to lead to the answer, through calls to `next(axis)`.
+        If no hint is provided, search starts from the Axis-headers. """
+        off_ax = ~ax
+        prev = hint or self.hdrs(ax)[index]
+        if prev is None or prev.index(off_ax) > before: return None
+
+        nxt = prev.next(ax)
+        while nxt is not None and nxt.index(off_ax) < before:
+            prev = nxt
+            nxt = nxt.next(ax)
         return prev
 
     def above_row(self, row: int, col: int, hint: Optional[Element] = None) -> Optional[Element]:
@@ -251,17 +462,15 @@ class SparseMatrix(object):
         for e in self.rows:
             if e is None: raise SingularMatrix
 
-        self.state = MatrixState.FACTORING
-
-        # Set up row-swap mappings
-        self.rowmap_e2i = list(range(len(self.rows)))
-        self.rowmap_i2e = list(range(len(self.rows)))
+        self.set_state(MatrixState.FACTORING)
 
         for d in self.diag[:-1]:
             pivot = self.find_max_below(d)
-            self.swap_rows(pivot.row, d.row)
+            # FIXME: use column swaps too!
+            self.swap(Axis.rows, pivot.row, d.row)
             self.row_col_elim(pivot)
-        self.state = MatrixState.FACTORED
+
+        self.set_state(MatrixState.FACTORED)
 
     def find_max_below(self, below: Element):
         """ Find the max in-column value at or below Element `e` """
@@ -313,11 +522,11 @@ class SparseMatrix(object):
             assert len(rhs) == len(self.rows), f'Invalid rhs: length {len(rhs)} for matrix size {len(self.rows)}'
             c = rhs
             for n, v in enumerate(rhs):
-                c[self.rowmap_e2i[n]] = v
+                c[self.mappings[Axis.rows].e2i[n]] = v
         else:  # Collect a sparse rhs into a solution-list
             if rhs is not None:
                 for r, v in rhs.items():
-                    c[self.rowmap_e2i[r]] = v
+                    c[self.mappings[Axis.rows].e2i[r]] = v
 
         # Forward substitution: Lc=b
         for d in self.diag:
@@ -349,9 +558,8 @@ class SparseMatrix(object):
         m = SparseMatrix()
         for (row, re) in enumerate(self.rows):
             for (col, ce) in enumerate(other.cols):
-                val = 0
-
                 # "Two pointer" row * col dot-product
+                val = 0
                 while re is not None and ce is not None:
                     if ce is None or re.col < ce.row:
                         re = re.next_in_row
@@ -361,7 +569,6 @@ class SparseMatrix(object):
                         val += re.val * ce.val
                         re = re.next_in_row
                         ce = ce.next_in_col
-
                 if val != 0:
                     m.add_element(row, col, val)
 
@@ -423,6 +630,20 @@ class SparseMatrix(object):
         for k in range(n):
             m.add_element(k, k, 1.0)
         return m
+
+    def set_state(self, state: MatrixState):
+        if state is MatrixState.FACTORING:
+            assert self.state is MatrixState.CREATED
+            self.mappings = {
+                Axis.rows: AxisMapping(len(self.rows)),
+                Axis.cols: AxisMapping(len(self.cols)),
+            }
+            self.state = state
+        elif state is MatrixState.FACTORED:
+            assert self.state is MatrixState.FACTORING
+            self.state = state
+        else:
+            raise ValueError
 
 
 class MatrixError(Exception): pass
