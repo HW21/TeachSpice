@@ -130,13 +130,13 @@ class SparseMatrix(object):
             e = e.next_in_row
         if e is None or e.col != col:
             return None
-        assert e.row == row
-        assert e.col == col
+        MatrixError.assert_true(e.row == row)
+        MatrixError.assert_true(e.col == col)
         return e
 
     def hdrs(self, axis: Axis):
         """ Return the axis-header array for either rows or columns. """
-        assert isinstance(axis, Axis)
+        MatrixError.assert_true(isinstance(axis, Axis))
         if axis is Axis.rows: return self.rows
         if axis is Axis.cols: return self.cols
         raise ValueError
@@ -152,28 +152,32 @@ class SparseMatrix(object):
         if idx == to: return
 
         if idx < to:  # Search for element first
-            be = self.prev(off_ax, e)
             br = self.before_index(ax=off_ax, index=y, before=to, hint=e)
+
+            if br is not e:  # Need some pointer-swaps
+                be = self.prev(off_ax, e)
+                if be is None:  # Move out of header array
+                    self.hdrs(off_ax)[y] = e.next(off_ax)
+                else:
+                    be.set_next(off_ax, e.next(off_ax))
+                e.set_next(off_ax, br.next(off_ax))
+                br.set_next(off_ax, e)
+
         else:  # Search for row first
             br = self.before_index(ax=off_ax, index=y, before=to)
             be = self.prev(off_ax, e, hint=br)
 
-        # Things that (may) need to happen:
-        # * "Short" over `e` from `be` to `e.next`
-        # * Splice `e` in after `br`, or
-        # * Update column-header
+            if br is not be:  # If we (may) need some pointer updates
+                if be is not None:  # Short-circuit over `e`
+                    be.set_next(off_ax, e.next(off_ax))
 
-        if br is not be:  # If we (may) need some pointer updates
-            if be is not None:  # Short-circuit over `e`
-                be.set_next(off_ax, e.next(off_ax))
-
-            if br is None:  # New first in column
-                first = self.hdrs(off_ax)[y]
-                e.set_next(off_ax, first)
-                self.hdrs(off_ax)[y] = e
-            elif br is not e:  # Splice `e` in after `br`
-                e.set_next(off_ax, br.next(off_ax))
-                br.set_next(off_ax, e)
+                if br is None:  # New first in column
+                    first = self.hdrs(off_ax)[y]
+                    e.set_next(off_ax, first)
+                    self.hdrs(off_ax)[y] = e
+                elif br is not e:  # Splice `e` in after `br`
+                    e.set_next(off_ax, br.next(off_ax))
+                    br.set_next(off_ax, e)
 
         e.set_index(ax, to)
         if idx == y:  # If `e` was on the diagonal, remove it
@@ -188,9 +192,9 @@ class SparseMatrix(object):
         E.g. exchange_elements(Axis.rows, ex, ey) exchanges the rows of ex and ey. """
 
         off_ax = ~ax
-        assert ex.index(off_ax) == ey.index(off_ax)
+        MatrixError.assert_true(ex.index(off_ax) == ey.index(off_ax))
         off_idx = ey.index(off_ax)
-        assert ex.index(ax) < ey.index(ax)
+        MatrixError.assert_true(ex.index(ax) < ey.index(ax))
 
         # Find the elements before each of `ex` and `ey`.
         bx = self.prev(off_ax, ex)
@@ -294,7 +298,7 @@ class SparseMatrix(object):
         while nxt is not None and nxt is not e:
             prev = nxt
             nxt = nxt.next(ax)
-        assert nxt is e
+        MatrixError.assert_true(nxt is e)
         return prev
 
     def above(self, e: Element, hint: Optional[Element] = None) -> Optional[Element]:
@@ -308,7 +312,7 @@ class SparseMatrix(object):
         while next is not None and next is not e:
             prev = next
             next = next.next_in_col
-        assert next is e
+        MatrixError.assert_true(next is e)
         return prev
 
     def before_index(self, ax: Axis, index: int, before: int, hint: Optional[Element] = None) -> Optional[Element]:
@@ -370,8 +374,8 @@ class SparseMatrix(object):
 
     def exchange_col_elements(self, ex: Element, ey: Element):
         """ Swap the rows of two elements in the same column """
-        assert ex.col == ey.col
-        assert ex.row < ey.row
+        MatrixError.assert_true(ex.col == ey.col)
+        MatrixError.assert_true(ex.row < ey.row)
 
         # Find the elements before each of `ex` and `ey`.
         bx = self.above(ex)
@@ -395,6 +399,7 @@ class SparseMatrix(object):
         if ey.row == ey.col: self.diag[ey.row] = ey
 
     def insert(self, e: Element) -> Element:
+        """ Insert new Element `e` """
         expanded = False
         if e.row > len(self.rows) - 1:
             self.rows.extend([None] * (1 + e.row - len(self.rows)))
@@ -414,7 +419,7 @@ class SparseMatrix(object):
         col_head = self.cols[e.col]
         if col_head is None:
             self.cols[e.col] = e
-        elif col_head.col > e.col:
+        elif col_head.row > e.row:
             e.next_in_col = col_head
             self.cols[e.col] = e
         else:
@@ -466,7 +471,7 @@ class SparseMatrix(object):
             # Swap it onto our diagonal at index `n`
             self.swap(Axis.rows, pivot.row, n)
             self.swap(Axis.cols, pivot.col, n)
-            assert self.diag[n] is pivot
+            MatrixError.assert_true(self.diag[n] is pivot)
             # And convert its row/column
             self.row_col_elim(pivot)
 
@@ -533,18 +538,18 @@ class SparseMatrix(object):
         """ Complete forward & backward substitution
         Generally described as breaking Ax = LUx = b down into
         Lc = b, Ux = c """
-        assert self.state == MatrixState.FACTORED
+        MatrixError.assert_true(self.state == MatrixState.FACTORED)
 
-        c = [0.0] * len(self.rows)
         if isinstance(rhs, list):
-            assert len(rhs) == len(self.rows), f'Invalid rhs: length {len(rhs)} for matrix size {len(self.rows)}'
-            c = rhs
+            MatrixError.assert_eq(len(rhs), len(self.rows))
+            ##, f'Invalid rhs: length {len(rhs)} for matrix size {len(self.rows)}'
+            c = rhs[:]
             for n, v in enumerate(rhs):
                 c[self.mappings[Axis.rows].e2i[n]] = v
-        else:  # Collect a sparse rhs into a solution-list
-            if rhs is not None:
-                for r, v in rhs.items():
-                    c[self.mappings[Axis.rows].e2i[r]] = v
+        elif rhs is not None:  # Collect a sparse rhs into a dense list
+            c = [0.0] * len(self.rows)
+            for r, v in rhs.items():
+                c[self.mappings[Axis.rows].e2i[r]] = v
 
         # Forward substitution: Lc=b
         for d in self.diag:
@@ -617,7 +622,7 @@ class SparseMatrix(object):
 
     def extract_lu(self):
         """ Return two-tuple (L,U) of matrices from factored `self` """
-        assert self.state == MatrixState.FACTORED
+        MatrixError.assert_true(self.state == MatrixState.FACTORED)
 
         l = SparseMatrix()
         for e in self.diag:
@@ -655,20 +660,70 @@ class SparseMatrix(object):
 
     def set_state(self, state: MatrixState):
         if state is MatrixState.FACTORING:
-            assert self.state is MatrixState.CREATED
+            MatrixError.assert_true(self.state is MatrixState.CREATED)
             self.mappings = {
                 Axis.rows: AxisMapping(len(self.rows)),
                 Axis.cols: AxisMapping(len(self.cols)),
             }
             self.state = state
         elif state is MatrixState.FACTORED:
-            assert self.state is MatrixState.FACTORING
+            MatrixError.assert_true(self.state is MatrixState.FACTORING)
             self.state = state
         else:
             raise ValueError
 
+    def _checkup(self):
+        """ Internal consistency tests.  Probably pretty slow. """
 
-class MatrixError(Exception): pass
+        next_in_cols = list()
+        next_in_rows = list()
+        for n, e in enumerate(self.cols):
+            while e is not None:
+                MatrixError.assert_eq(e.col, n)
+                if e.next_in_col is not None:
+                    MatrixError.assert_true(e.next_in_col.row > e.row)
+                    MatrixError.assert_true(e.next_in_col not in next_in_cols)
+                    next_in_cols.append(e.next_in_col)
+                if e.next_in_row is not None:
+                    MatrixError.assert_true(e.next_in_row.col > e.col)
+                    MatrixError.assert_true(e.next_in_row not in next_in_rows)
+                    next_in_rows.append(e.next_in_row)
+                e = e.next_in_col
+
+        next_in_cols = list()
+        next_in_rows = list()
+        for n, e in enumerate(self.rows):
+            while e is not None:
+                MatrixError.assert_eq(e.row, n)
+                if e.next_in_col is not None:
+                    MatrixError.assert_true(e.next_in_col.row > e.row)
+                    MatrixError.assert_true(e.next_in_col not in next_in_cols)
+                    next_in_cols.append(e.next_in_col)
+                if e.next_in_row is not None:
+                    MatrixError.assert_true(e.next_in_row.col > e.col)
+                    MatrixError.assert_true(e.next_in_row not in next_in_rows)
+                    next_in_rows.append(e.next_in_row)
+                e = e.next_in_row
+
+        for n, e in enumerate(self.diag):
+            MatrixError.assert_is(self.diag[n], self.get(n, n))
+
+
+class MatrixError(Exception):
+    @classmethod
+    def assert_true(cls, cond):
+        if not cond:
+            raise cls
+
+    @classmethod
+    def assert_eq(cls, x, y):
+        if x != y:
+            raise cls
+
+    @classmethod
+    def assert_is(cls, x, y):
+        if x is not y:
+            raise cls
 
 
 class MatrixDimError(MatrixError): pass

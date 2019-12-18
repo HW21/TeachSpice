@@ -173,6 +173,20 @@ def test_swap_rows3():
     assert e.val == -11
 
 
+def test_swap_rows4():
+    m = SparseMatrix()
+
+    for r in range(3):
+        for c in range(3):
+            if not (r == 0 and c == 1):
+                m.add_element(r, c, (r + 1) * (c + 1))
+
+    m.set_state(MatrixState.FACTORING)
+
+    m.swap_rows(0, 1)
+    # FIXME: add some real checks on this
+
+
 def test_row_mappings():
     m = SparseMatrix.identity(4)
     m.set_state(MatrixState.FACTORING)

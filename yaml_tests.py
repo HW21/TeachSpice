@@ -1,18 +1,27 @@
+import math
 from pathlib import Path
 from spice.sparse.yaml import MatrixYaml
+
+
+def eq_or_close(xi, yi):
+    """ Set our params for `math.isclose` """
+    return math.isclose(xi, yi, rel_tol=1e-6, abs_tol=1e-9)
 
 
 def eq(x: list, y: list) -> bool:
     """ Compensate for limited precision saved in file outputs """
     for xi, yi in zip(x, y):
-        if abs(xi - yi) > 1e-5: return False
+        if not eq_or_close(xi, yi): return False
     return True
 
 
 def peek_size(path):
+    """ Take a quick peek at the `size` field of our YAML schema.
+    One (hefty) downside of using YAML: parsers read all at once.
+    So big files can be pretty, pretty slow. """
     with open(path, 'r')as f:
-        hdr = f.readline()
-        size_line = f.readline()
+        _ = f.readline()  # Line 1: Description
+        size_line = f.readline()  # Line 2: Size
         if "size" not in size_line:
             raise Exception
         _, size_str = size_line.strip().split()
@@ -41,7 +50,7 @@ def yaml_testcases():
         try:  # only run small cases, for now
             size = peek_size(p)
             res['size'] = size
-            if size > 10_000:
+            if size > 1000:
                 continue
         except Exception as e:
             print(e)
@@ -80,8 +89,12 @@ def yaml_testcases():
             if correct:
                 print(f"Test Case Succeeded: {p.name}")
             else:
-                print(f"Incorrect Solution: {x}")
-                print(f"Solution (from YAML): {y.solution}")
+                print(f"Incorrect Solution")
+                print(f"      x      y      diff     isclose")
+                for xi, yi in zip(x, y.solution):
+                    s = f'{xi: 7e} {yi: 7e} {abs(xi - yi): 7e}  '
+                    s += str(eq_or_close(xi, yi))
+                    print(s)
 
         try:  # Check by multiplying with our calculated solution
             y = MatrixYaml.load(p)
