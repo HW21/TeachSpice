@@ -1,4 +1,5 @@
 import pytest
+import math
 from ..matrix import Element, SparseMatrix, MatrixError, MatrixState, Axis
 
 
@@ -322,8 +323,10 @@ def test_solve():
     m3 = l.matmul(u)
     print(m3)
 
-    c = m.solve(rhs={0: 6, 1: -4, 2: 27})
-    assert c == [5, 3, -2]
+    soln = m.solve(rhs={0: 6, 1: -4, 2: 27})
+    correct = [5, 3, -2]
+    for s, c in zip(soln, correct):
+        assert math.isclose(s, c)
 
 
 def check_diagonal(m: SparseMatrix):
@@ -381,3 +384,36 @@ def test_matmul():
     assert i5a is not i5c
     assert i5b == i5c
     assert i5b is not i5c
+
+
+def test_find_max():
+    m = SparseMatrix()
+    for r in range(5):
+        for c in range(5):
+            m.add_element(r, c, (r + 1) * (c + 1))
+
+    e00 = m.get(0, 0)
+    e44 = m.get(4, 4)
+    max_elem = m.find_max(0)
+    assert max_elem is e44
+
+
+def test_find_max2():
+    m = SparseMatrix()
+    for r in range(5):
+        for c in range(5):
+            m.add_element(r, c, 25 - ((r + 1) * (c + 1)))
+
+    for k in range(5):
+        e = m.get(k, k)
+        max_elem = m.find_max(k)
+        assert max_elem is e
+
+
+def test_find_max3():
+    m = SparseMatrix()
+    e00 = m.add_element(0, 0, 1)
+    m.add_element(1, 0, 2)
+    m.add_element(1, 0, 3)
+    e11 = m.add_element(1, 1, -5)
+    assert m.find_max(0) is e11

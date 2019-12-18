@@ -92,16 +92,16 @@ class SparseMatrix(object):
         self.fillins: List[Element] = []
         self.mappings: Optional[Dict[Axis, AxisMapping]] = None
 
-    def elements(self):
-        """ Columns-first iterator of elements """
-        for c in self.cols:
+    def elements(self, ax: Axis = Axis.cols):
+        """ Iterator of elements.  Major axis set by `ax` parameter.  Default: columns. """
+        for c in self.hdrs(ax):
             while c is not None:
                 yield c
-                c = c.next_in_col
+                c = c.next(ax)
 
-    def values(self):
+    def values(self, *args, **kwargs):
         """ Columns-first iterator of element values"""
-        for e in self.elements(): yield e.val
+        for e in self.elements(*args, **kwargs): yield e.val
 
     def __eq__(self, other):
         if len(self.rows) != len(other.rows): return False
@@ -176,7 +176,10 @@ class SparseMatrix(object):
                 br.set_next(off_ax, e)
 
         e.set_index(ax, to)
-        if e.row == e.col: self.diag[e.row] = e
+        if idx == y:  # If `e` was on the diagonal, remove it
+            self.diag[idx] = None
+        elif e.row == e.col:  # Or if it's now on the diagonal, add it
+            self.diag[e.row] = e
 
     def exchange_elements(self, ax: Axis, ex: Element, ey: Element):
         """ Swap two elements `ax` indices.
@@ -243,7 +246,6 @@ class SparseMatrix(object):
 
         # Swap row-header pointers
         ax_hdrs[x], ax_hdrs[y] = ax_hdrs[y], ax_hdrs[x]
-
         # Make updates to our row-mappings
         self.mappings[axis].swap_int(x, y)
 
@@ -278,13 +280,8 @@ class SparseMatrix(object):
 
         # Swap row-header pointers
         self.rows[x], self.rows[y] = self.rows[y], self.rows[x]
-
         # Make updates to our row-mappings
         self.mappings[Axis.rows].swap_int(x, y)
-        # self.row_swap_history.append((x, y))
-        # self.rowmap_i2e[x], self.rowmap_i2e[y] = self.rowmap_i2e[y], self.rowmap_i2e[x]
-        # self.rowmap_e2i[self.rowmap_i2e[x]] = x
-        # self.rowmap_e2i[self.rowmap_i2e[y]] = y
 
     def prev(self, ax: Axis, e: Element, hint: Optional[Element] = None) -> Optional[Element]:
         """ Find the element before `e`, in direction `ax`.
@@ -453,7 +450,6 @@ class SparseMatrix(object):
         """ Updates self to S = L + U - I.
         Diagonal entries are those of U;
         L has diagonal entries equal to one. """
-        # FIXME: no pivoting/ swapping, yet
 
         # Quick singularity check
         # Each row & column must have entries
@@ -464,15 +460,37 @@ class SparseMatrix(object):
 
         self.set_state(MatrixState.FACTORING)
 
-        for d in self.diag[:-1]:
-            pivot = self.find_max_below(d)
-            # FIXME: use column swaps too!
-            self.swap(Axis.rows, pivot.row, d.row)
+        for n, d in enumerate(self.diag[:-1]):
+            # Find a pivot element
+            pivot = self.find_max(n)
+            # Swap it onto our diagonal at index `n`
+            self.swap(Axis.rows, pivot.row, n)
+            self.swap(Axis.cols, pivot.col, n)
+            assert self.diag[n] is pivot
+            # And convert its row/column
             self.row_col_elim(pivot)
 
         self.set_state(MatrixState.FACTORED)
 
-    def find_max_below(self, below: Element):
+    def find_max(self, n: int = 0) -> Element:
+        """ Find the max (abs value) element in sub-matrix of indices ≥ `n`. """
+
+        e = self.diag[n]  # Start from the diagonal, if available
+        if e is None:
+            e = self.cols[n]
+            while e.row < n:
+                e = e.next_in_col
+        max_elem = self.find_max_below(e)
+
+        for e in self.cols[n:]:
+            while e.row < n:
+                e = e.next_in_col
+            max_in_col = self.find_max_below(e)
+            if abs(max_in_col.val) > abs(max_elem.val):
+                max_elem = max_in_col
+        return max_elem
+
+    def find_max_below(self, below: Element) -> Element:
         """ Find the max in-column value at or below Element `e` """
         e = max_elem = below
         while e is not None:
@@ -548,7 +566,11 @@ class SparseMatrix(object):
                 e = e.next_in_row
             c[d.row] /= d.val
 
-        return c
+        # Unwind any column-swaps
+        soln = [0.0] * len(c)
+        for k in range(len(c)):
+            soln[k] = c[self.mappings[Axis.cols].e2i[k]]
+        return soln
 
     def matmul(self, other):
         """ Matrix multiplication self*other """
