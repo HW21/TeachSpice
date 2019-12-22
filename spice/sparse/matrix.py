@@ -41,11 +41,29 @@ class AxisMapping(object):
         self.history.append((x, y))
 
 
+class AxisData(object):
+    def __init__(self, ax: Axis, size: int = 1):
+        self.ax: Axis = ax
+        self.hdrs: List[Optional[Element]] = [None] * size
+        self.qtys: List[int] = [0] * size
+        self.markowitz: Optional[List[int]] = None
+        self.mapping: Optional[AxisMapping] = None
+
+    def __len__(self):
+        return len(self.hdrs)
+
+    def grow(self, to: int):
+        MatrixError.assert_true(to > len(self))
+        by = to - len(self.hdrs)
+        self.hdrs.extend([None] * by)
+        self.qtys.extend([0] * by)
+
+
 class Element(object):
     def __init__(self, row: int, col: int, val: float, fillin: bool = False):
-        self.row = row
-        self.col = col
-        self.val = val
+        self.row = self.orig_row = row
+        self.col = self.orig_col = col
+        self.val = self.orig_val = val
         self.fillin = fillin
         self.next_in_row = None
         self.next_in_col = None
@@ -86,11 +104,33 @@ class Element(object):
 class SparseMatrix(object):
     def __init__(self):
         self.state = MatrixState.CREATED
-        self.rows: List[Optional[Element]] = [None]
-        self.cols: List[Optional[Element]] = [None]
+        self.axes = {
+            Axis.rows: AxisData(ax=Axis.rows),
+            Axis.cols: AxisData(ax=Axis.cols),
+        }
         self.diag: List[Optional[Element]] = [None]
+        self.all_elem: List[Element] = []
         self.fillins: List[Element] = []
         self.mappings: Optional[Dict[Axis, AxisMapping]] = None
+
+    @property
+    def rows(self):
+        return self.axes[Axis.rows].hdrs
+
+    @property
+    def cols(self):
+        return self.axes[Axis.cols].hdrs
+
+    def display(self) -> str:
+        """ Create a string "X" versus " " display of matrix entries. """
+        s = ''
+        for e in self.rows:
+            row = [' '] * len(self.cols)
+            while e is not None:
+                row[e.col] = 'X'
+                e = e.next_in_row
+            s += ''.join(row) + '\n'
+        return s
 
     def elements(self, ax: Axis = Axis.cols):
         """ Iterator of elements.  Major axis set by `ax` parameter.  Default: columns. """
@@ -102,6 +142,30 @@ class SparseMatrix(object):
     def values(self, *args, **kwargs):
         """ Columns-first iterator of element values"""
         for e in self.elements(*args, **kwargs): yield e.val
+
+    def col_elements(self, n: int, start: int = 0):
+        c = self.cols[n]
+        while c is not None and c.row < start:
+            c = c.next_in_col
+        while c is not None:
+            yield c
+            c = c.next_in_col
+
+    def row_elements(self, n: int, start: int = 0):
+        c = self.rows[n]
+        while c is not None and c.col < start:
+            c = c.next_in_row
+        while c is not None:
+            yield c
+            c = c.next_in_row
+
+    def submatrix_elements(self, n: int):
+        for c in self.cols[n:]:
+            while c is not None and c.row < n:
+                c = c.next_in_col
+            while c is not None:
+                yield c
+                c = c.next_in_col
 
     def __eq__(self, other):
         if len(self.rows) != len(other.rows): return False
@@ -179,7 +243,9 @@ class SparseMatrix(object):
                     e.set_next(off_ax, br.next(off_ax))
                     br.set_next(off_ax, e)
 
+        # Update `e`s row/column index
         e.set_index(ax, to)
+
         if idx == y:  # If `e` was on the diagonal, remove it
             self.diag[idx] = None
         elif e.row == e.col:  # Or if it's now on the diagonal, add it
@@ -248,8 +314,11 @@ class SparseMatrix(object):
                 ex = ex.next(axis)
                 ey = ey.next(axis)
 
-        # Swap row-header pointers
+        # Swap row-header pointers and counts
         ax_hdrs[x], ax_hdrs[y] = ax_hdrs[y], ax_hdrs[x]
+        self.axes[axis].qtys[x], self.axes[axis].qtys[y] = self.axes[axis].qtys[y], self.axes[axis].qtys[x]
+        self.axes[axis].markowitz[x], self.axes[axis].markowitz[y] = self.axes[axis].markowitz[y], \
+                                                                     self.axes[axis].markowitz[x]
         # Make updates to our row-mappings
         self.mappings[axis].swap_int(x, y)
 
@@ -400,20 +469,17 @@ class SparseMatrix(object):
 
     def insert(self, e: Element) -> Element:
         """ Insert new Element `e` """
+        self.all_elem.append(e)
         expanded = False
         if e.row > len(self.rows) - 1:
-            self.rows.extend([None] * (1 + e.row - len(self.rows)))
+            self.axes[Axis.rows].grow(to=e.row + 1)
             expanded = True
         if e.col > len(self.cols) - 1:
-            self.cols.extend([None] * (1 + e.col - len(self.cols)))
+            self.axes[Axis.cols].grow(to=e.col + 1)
             expanded = True
         if expanded:
             new_diag_len = min(len(self.rows), len(self.cols))
             self.diag.extend([None] * (new_diag_len - len(self.diag)))
-        if e.row == e.col:
-            self.diag[e.col] = e
-        if e.fillin:
-            self.fillins.append(e)
 
         # Insert into the col
         col_head = self.cols[e.col]
@@ -449,6 +515,19 @@ class SparseMatrix(object):
             elem.next_in_row = e
             e.next_in_row = next
 
+        # Update row & column quantities
+        self.axes[Axis.rows].qtys[e.row] += 1
+        self.axes[Axis.cols].qtys[e.col] += 1
+        if self.state >= MatrixState.FACTORING:
+            self.axes[Axis.rows].markowitz[e.row] += 1
+            self.axes[Axis.cols].markowitz[e.col] += 1
+
+        # Modify our special arrays
+        if e.row == e.col:
+            self.diag[e.col] = e
+        if e.fillin:
+            self.fillins.append(e)
+
         return e
 
     def lu_factorize(self):
@@ -458,41 +537,148 @@ class SparseMatrix(object):
 
         # Quick singularity check
         # Each row & column must have entries
-        for e in self.cols:
-            if e is None: raise SingularMatrix
-        for e in self.rows:
-            if e is None: raise SingularMatrix
+        for e in self.cols: SingularMatrix.assert_is_not(e, None)
+        for e in self.rows: SingularMatrix.assert_is_not(e, None)
 
         self.set_state(MatrixState.FACTORING)
 
         for n, d in enumerate(self.diag[:-1]):
             # Find a pivot element
-            pivot = self.find_max(n)
+            pivot = self.search_for_pivot(n)
+            Assert(pivot).is_not(None)
+
             # Swap it onto our diagonal at index `n`
             self.swap(Axis.rows, pivot.row, n)
             self.swap(Axis.cols, pivot.col, n)
-            MatrixError.assert_true(self.diag[n] is pivot)
+            MatrixError.assert_is(self.diag[n], pivot)
+
             # And convert its row/column
             self.row_col_elim(pivot)
 
         self.set_state(MatrixState.FACTORED)
 
-    def find_max(self, n: int = 0) -> Element:
-        """ Find the max (abs value) element in sub-matrix of indices ≥ `n`. """
+    def max_after_index(self, ax: Axis, index: int, after: int = 0) -> Optional[Element]:
+        """  Find the maximum absolute-value element in Axis `ax`, index `index`,
+        with off-axis index greater than or equal to `after`.
 
-        e = self.diag[n]  # Start from the diagonal, if available
-        if e is None:
-            e = self.cols[n]
-            while e.row < n:
-                e = e.next_in_col
-        max_elem = self.find_max_below(e)
+        Example: max_after_index(Axis.cols, 5, after=3)
+        find the max-valued element in column 5, row ≥ 3. """
+        e = self.hdrs(ax)[index]
+        while e is not None and e.index(~ax) < after:
+            e = e.next(ax)
+
+        best = e
+        while e is not None:
+            if best is None or abs(e.val) > abs(best.val):
+                best = e
+            e = e.next(ax)
+        return best
+
+    def search_for_pivot(self, n: int = 0) -> Optional[Element]:
+        """ Find a pivot element for sub-matrix starting at row/col `n`. """
+        p = self.search_diagonal(n)
+        if p is not None:
+            return p
+        p = self.search_submatrix(n)
+        if p is not None:
+            return p
+        return self.find_max(n)
+
+    def search_diagonal(self, n: int = 0) -> Optional[Element]:
+
+        REL_THRESHOLD = 1e-3
+        ABS_THRESHOLD = 0
+        TIES_MULT = 5
+
+        best_elem = None
+        best_mark = None
+        best_ratio = None
+        num_ties = 0
+
+        for d in self.diag[n:]:
+            if d is None:
+                continue
+            max_in_col = self.max_after_index(Axis.cols, index=n, after=n)
+            threshold = REL_THRESHOLD * abs(max_in_col.val) + ABS_THRESHOLD
+            if abs(d.val) < threshold:
+                continue
+            mark = self.markowitz_product(d)
+            if best_mark is None or mark < best_mark:
+                num_ties = 0
+                best_elem = d
+                best_mark = mark
+                best_ratio = abs(d.val / max_in_col.val)
+            elif mark == best_mark:
+                num_ties += 1
+                ratio = abs(d.val / max_in_col.val)
+                if ratio > best_ratio:
+                    best_elem = d
+                    best_mark = mark
+                    best_ratio = ratio
+                if num_ties >= best_mark * TIES_MULT:
+                    return best_elem
+        return best_elem
+
+    def search_submatrix(self, n: int = 0) -> Optional[Element]:
+        """ Markowitz-based search for pivot element.
+        Markowitz=product ties are broken by ratio of element value to largest value in its column. """
+
+        REL_THRESHOLD = 1e-3
+        ABS_THRESHOLD = 0
+
+        best_elem = None
+        best_mark = None
+        best_ratio = None
 
         for e in self.cols[n:]:
-            while e.row < n:
+            while e is not None and e.row < n:
                 e = e.next_in_col
             max_in_col = self.find_max_below(e)
-            if abs(max_in_col.val) > abs(max_elem.val):
-                max_elem = max_in_col
+            while e is not None:
+                mark = self.markowitz_product(e)
+                # Check whether the best in column qualifies
+                threshold = REL_THRESHOLD * abs(max_in_col.val) + ABS_THRESHOLD
+                if abs(e.val) >= threshold:
+                    if best_elem is None or mark < best_mark:
+                        best_elem = e
+                        best_mark = mark
+                        best_ratio = abs(e.val / max_in_col.val)
+                    elif mark == best_mark:
+                        # Tie-break via ratio of value to max-value in column
+                        ratio = abs(e.val / max_in_col.val)
+                        if best_ratio is None or ratio > best_ratio:
+                            best_elem = e
+                            best_mark = mark
+                            best_ratio = ratio
+                e = e.next_in_col
+
+        return best_elem
+
+    def markowitz_product(self, e: Element) -> int:
+        Assert(e).is_not(None)
+        mr = self.axes[Axis.rows].markowitz[e.row]
+        mc = self.axes[Axis.cols].markowitz[e.col]
+        Assert(mr).gt(0)
+        Assert(mc).gt(0)
+        return (mr - 1) * (mc - 1)
+
+    def find_max(self, n: int = 0) -> Element:
+        """ Find the max (abs value) element in sub-matrix of indices ≥ `n`. """
+        max_elem = None
+        for e in self.cols[n:]:
+            while e is not None and e.row < n:
+                e = e.next_in_col
+            if max_elem is None:
+                max_elem = e
+            while e is not None:
+                if abs(e.val) > abs(max_elem.val):
+                    max_elem = e
+                #     ties = [max_elem]
+                # elif abs(e.val) == abs(max_elem.val):
+                #     ties.append(e)
+                e = e.next_in_col
+        # if len(ties) > 1:
+        #     print(f"{len(ties)} Ties in Pivot-Search: {ties}")
         return max_elem
 
     def find_max_below(self, below: Element) -> Element:
@@ -508,7 +694,8 @@ class SparseMatrix(object):
         """ Eliminate the row & column of element `pivot`,
         transforming them into the LU-factored row/col of L and U.
         Uses Gauss's algorithm, without any fancy tricks applied. """
-        if pivot.val == 0: raise SingularMatrix
+        SingularMatrix.assert_not_eq(pivot.val, 0)
+        SingularMatrix.assert_eq(pivot.row, pivot.col)
 
         # Divide the pivot-column entries by the pivot-value
         plower = pivot.next_in_col
@@ -532,7 +719,18 @@ class SparseMatrix(object):
                 psub.val -= pupper.val * plower.val
                 psub = psub.next_in_col
                 plower = plower.next_in_col
+
+            # In-line update Markowitz count for the column of `pupper`
+            self.axes[Axis.cols].markowitz[pupper.col] -= 1
             pupper = pupper.next_in_row
+
+        # Update remaining Markowitz counts
+        self.axes[Axis.rows].markowitz[pivot.row] -= 1
+        self.axes[Axis.cols].markowitz[pivot.col] -= 1
+        plower = pivot.next_in_col
+        while plower is not None:
+            self.axes[Axis.rows].markowitz[plower.row] -= 1
+            plower = plower.next_in_col
 
     def solve(self, rhs: Union[Dict[int, float], List[float], None] = None):
         """ Complete forward & backward substitution
@@ -546,10 +744,11 @@ class SparseMatrix(object):
             c = rhs[:]
             for n, v in enumerate(rhs):
                 c[self.mappings[Axis.rows].e2i[n]] = v
-        elif rhs is not None:  # Collect a sparse rhs into a dense list
+        else:
             c = [0.0] * len(self.rows)
-            for r, v in rhs.items():
-                c[self.mappings[Axis.rows].e2i[r]] = v
+            if rhs is not None:  # Collect a sparse rhs into a dense list
+                for r, v in rhs.items():
+                    c[self.mappings[Axis.rows].e2i[r]] = v
 
         # Forward substitution: Lc=b
         for d in self.diag:
@@ -665,6 +864,8 @@ class SparseMatrix(object):
                 Axis.rows: AxisMapping(len(self.rows)),
                 Axis.cols: AxisMapping(len(self.cols)),
             }
+            for axis in self.axes.values():  # Initialize Markowitz counts
+                axis.markowitz = axis.qtys[:]
             self.state = state
         elif state is MatrixState.FACTORED:
             MatrixError.assert_true(self.state is MatrixState.FACTORING)
@@ -721,9 +922,34 @@ class MatrixError(Exception):
             raise cls
 
     @classmethod
+    def assert_not_eq(cls, x, y):
+        if x == y:
+            raise cls
+
+    @classmethod
     def assert_is(cls, x, y):
         if x is not y:
             raise cls
+
+    @classmethod
+    def assert_is_not(cls, x, y):
+        if x is y:
+            raise cls
+
+
+class Assert(object):
+    def __init__(self, val):
+        self.val = val
+
+    def gt(self, other):
+        if self.val <= other:
+            raise MatrixError
+        return self
+
+    def is_not(self, other):
+        if self.val is other:
+            raise MatrixError
+        return self
 
 
 class MatrixDimError(MatrixError): pass

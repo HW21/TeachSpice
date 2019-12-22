@@ -15,6 +15,15 @@ def eq(x: list, y: list) -> bool:
     return True
 
 
+def print_vec_compare(x: list, y: list):
+    """ Print a comparison table between two vectors (lists) """
+    print(f"      x      y      diff     isclose")
+    for xi, yi in zip(x, y):
+        s = f'{xi: 7e} {yi: 7e} {abs(xi - yi): 7e}  '
+        s += str(eq_or_close(xi, yi))
+        print(s)
+
+
 def peek_size(path):
     """ Take a quick peek at the `size` field of our YAML schema.
     One (hefty) downside of using YAML: parsers read all at once.
@@ -33,24 +42,26 @@ def yaml_testcases():
     """ Run all YAML matrices in data/ dir """
 
     results = []
-    for p in Path("data/").glob("*.yaml"):
+    for p in Path("data/").glob("matXY*.yaml"):
         print(f"Running Test-Case {p.name}")
 
         res = dict(
             file=p.name,
             size=None,
             read=False,
-            rhs=False,
             factor=False,
+            rhs=False,
             solve=False,
-            correct=False
+            correct=False,
+            mult=False,
         )
         results.append(res)
 
         try:  # only run small cases, for now
             size = peek_size(p)
             res['size'] = size
-            if size > 1000:
+            if size > 200:
+                print("Size over limit, skipping")
                 continue
         except Exception as e:
             print(e)
@@ -67,6 +78,9 @@ def yaml_testcases():
             res['read'] = True
             res['rhs'] = y.rhs is not None
 
+        # z = m.mult(y.solution)
+        # print_vec_compare(y.rhs, z)
+
         try:
             print(f"Factorizing")
             m.lu_factorize()
@@ -75,6 +89,10 @@ def yaml_testcases():
             continue
         else:
             res['factor'] = True
+
+        # Skip solving the no-RHS cases; havent really figured out what to make of them
+        if y.rhs is None:
+            continue
 
         try:
             print(f"Solving")
@@ -90,11 +108,7 @@ def yaml_testcases():
                 print(f"Test Case Succeeded: {p.name}")
             else:
                 print(f"Incorrect Solution")
-                print(f"      x      y      diff     isclose")
-                for xi, yi in zip(x, y.solution):
-                    s = f'{xi: 7e} {yi: 7e} {abs(xi - yi): 7e}  '
-                    s += str(eq_or_close(xi, yi))
-                    print(s)
+                print_vec_compare(x, y.solution)
 
         try:  # Check by multiplying with our calculated solution
             y = MatrixYaml.load(p)
@@ -114,14 +128,18 @@ def yaml_testcases():
                     print(f"Mult-back yield incorrect: {x}")
                     print(f"Correct RHS: {y.rhs}")
 
-    print(f"{'File'.ljust(30)}Size   Read   RHS    Factor Solve  Correct")
+                    print_vec_compare(z, y.rhs)
 
-    def fmt(b) -> str:
-        return str(b).ljust(7)
+    # Print some summary info
+    hdr = 'File'.ljust(30)
+    for k in res:
+        if k != 'file': hdr += k.ljust(7)
+    print(hdr)
 
     for r in sorted(results, key=lambda r: r['file']):
-        print(f"{r['file'].ljust(30)}{fmt(r['size'])}" +
-              f"{fmt(r['read'])}{fmt(r['read'])}{fmt(r['factor'])}{fmt(r['solve'])}{fmt(r['correct'])}")
+        s = r.pop('file').ljust(30)
+        for k in r: s += str(r[k]).ljust(7)
+        print(s)
 
 
 if __name__ == '__main__':
