@@ -3,6 +3,14 @@ import math
 from ..matrix import Element, SparseMatrix, MatrixError, MatrixState, Axis
 
 
+def check_diagonal(m: SparseMatrix):
+    """ Helper function.  (Not a test!)
+    Check that the diagonal and get(r,r) are consistent. """
+    for r in range(len(m.diag)):
+        e = m.get(r, r)
+        assert e is m.diag[r]
+
+
 def test_create_element():
     e = Element(row=0, col=0, val=1.0)
     assert e.row == 0
@@ -12,9 +20,9 @@ def test_create_element():
 
 def test_create_matrix():
     m = SparseMatrix()
-    assert m.rows == [None]
-    assert m.cols == [None]
-    assert m.diag == [None]
+    assert m.rows == []
+    assert m.cols == []
+    assert m.diag == []
 
 
 def test_add_elements():
@@ -49,6 +57,19 @@ def test_get():
     assert e.val == -1.0
 
 
+def test_identity():
+    i2 = SparseMatrix.identity(2)
+    assert len(i2.rows) == 2
+    assert len(i2.cols) == 2
+    e = i2.get(0, 0)
+    assert e.val == 1
+    assert i2.diag[0] is e
+    assert e.next_in_col is None
+    assert e.next_in_row is None
+    e = i2.get(1, 1)
+    assert e.val == 1
+
+
 def test_swap_rows():
     m = SparseMatrix()
 
@@ -67,6 +88,85 @@ def test_swap_rows():
     e = m.get(0, 7)
     assert e is not None
     assert e.val == 44.0
+
+
+def test_swap_rows2():
+    m = SparseMatrix()
+
+    m.add_element(0, 0, 1)
+    m.add_element(0, 1, 2)
+    m.add_element(0, 2, 3)
+    m.add_element(1, 0, 4)
+    m.add_element(1, 1, 5)
+    m.add_element(1, 2, 6)
+    m.add_element(2, 0, 7)
+    m.add_element(2, 1, 8)
+    m.add_element(2, 2, 9)
+
+    m.set_state(MatrixState.FACTORING)
+
+    m.swap_rows(0, 2)
+    e = m.get(0, 0)
+    assert e is not None
+    assert e.val == 7.0
+
+
+def test_swap_rows3():
+    m = SparseMatrix()
+    m.add_element(1, 0, 71)
+    m.add_element(2, 0, -11)
+    m.add_element(2, 2, 99)
+
+    m.set_state(MatrixState.FACTORING)
+    m.swap_rows(0, 2)
+
+    e = m.get(0, 0)
+    assert e is not None
+    assert e.val == -11
+
+
+def test_swap_rows4():
+    m = SparseMatrix()
+
+    for r in range(3):
+        for c in range(3):
+            if not (r == 0 and c == 1):
+                m.add_element(r, c, (r + 1) * (c + 1))
+
+    m.set_state(MatrixState.FACTORING)
+
+    m.swap_rows(0, 1)
+    # FIXME: add some real checks on this
+
+
+def test_swap_rows5():
+    m = SparseMatrix()
+    m.add_element(0, 0, 1.0)
+    m.add_element(0, 1, 1.0)
+    m.add_element(0, 2, 1.0)
+    m.add_element(1, 1, 2.0)
+    m.add_element(1, 2, 5.0)
+    m.add_element(2, 0, 2.0)
+    m.add_element(2, 1, 5.0)
+    m.add_element(2, 2, -1.0)
+
+    m.set_state(MatrixState.FACTORING)
+
+    m.swap_rows(0, 2)
+
+    e1 = m.get(0, 0)
+    assert e1.val == 2.0
+    e2 = m.get(2, 0)
+    assert e2.val == 1.0
+    assert e1.next_in_col is e2
+    assert e2.next_in_col is None
+
+    e01 = m.get(0, 1)
+    e11 = m.get(1, 1)
+    e21 = m.get(2, 1)
+    assert e01.next_in_col is e11
+    assert e11.next_in_col is e21
+    assert e21.next_in_col is None
 
 
 def test_swap_cols():
@@ -135,56 +235,6 @@ def test_swap_cols():
     m.swap_cols(0, 7)
     assert list(m.values()) == [33, 44, -1, -2, -3, 11, 22]
 
-
-def test_swap_rows2():
-    m = SparseMatrix()
-
-    m.add_element(0, 0, 1)
-    m.add_element(0, 1, 2)
-    m.add_element(0, 2, 3)
-    m.add_element(1, 0, 4)
-    m.add_element(1, 1, 5)
-    m.add_element(1, 2, 6)
-    m.add_element(2, 0, 7)
-    m.add_element(2, 1, 8)
-    m.add_element(2, 2, 9)
-
-    m.set_state(MatrixState.FACTORING)
-
-    m.swap_rows(0, 2)
-    e = m.get(0, 0)
-    assert e is not None
-    assert e.val == 7.0
-
-
-def test_swap_rows3():
-    m = SparseMatrix()
-    m.add_element(1, 0, 71)
-    m.add_element(2, 0, -11)
-    m.add_element(2, 2, 99)
-
-    # Fake-set the FACTORING state
-    m.set_state(MatrixState.FACTORING)
-
-    m.swap_rows(0, 2)
-
-    e = m.get(0, 0)
-    assert e is not None
-    assert e.val == -11
-
-
-def test_swap_rows4():
-    m = SparseMatrix()
-
-    for r in range(3):
-        for c in range(3):
-            if not (r == 0 and c == 1):
-                m.add_element(r, c, (r + 1) * (c + 1))
-
-    m.set_state(MatrixState.FACTORING)
-
-    m.swap_rows(0, 1)
-    # FIXME: add some real checks on this
 
 
 def test_row_mappings():
@@ -267,35 +317,6 @@ def test_lu_lower():
     assert e.val == 1.0
 
 
-def test_swap():
-    m = SparseMatrix()
-    m.add_element(0, 0, 1.0)
-    m.add_element(0, 1, 1.0)
-    m.add_element(0, 2, 1.0)
-    m.add_element(1, 1, 2.0)
-    m.add_element(1, 2, 5.0)
-    m.add_element(2, 0, 2.0)
-    m.add_element(2, 1, 5.0)
-    m.add_element(2, 2, -1.0)
-
-    m.set_state(MatrixState.FACTORING)
-
-    m.swap_rows(0, 2)
-
-    e1 = m.get(0, 0)
-    assert e1.val == 2.0
-    e2 = m.get(2, 0)
-    assert e2.val == 1.0
-    assert e1.next_in_col is e2
-    assert e2.next_in_col is None
-
-    e01 = m.get(0, 1)
-    e11 = m.get(1, 1)
-    e21 = m.get(2, 1)
-    assert e01.next_in_col is e11
-    assert e11.next_in_col is e21
-    assert e21.next_in_col is None
-
 
 def test_lu():
     m = SparseMatrix()
@@ -341,27 +362,6 @@ def test_solve():
     correct = [5, 3, -2]
     for s, c in zip(soln, correct):
         assert math.isclose(s, c)
-
-
-def check_diagonal(m: SparseMatrix):
-    """ Helper function.
-    Check that the diagonal and get(r,r) are consistent. """
-    for r in range(len(m.diag)):
-        e = m.get(r, r)
-        assert e is m.diag[r]
-
-
-def test_identity():
-    i2 = SparseMatrix.identity(2)
-    assert len(i2.rows) == 2
-    assert len(i2.cols) == 2
-    e = i2.get(0, 0)
-    assert e.val == 1
-    assert i2.diag[0] is e
-    assert e.next_in_col is None
-    assert e.next_in_row is None
-    e = i2.get(1, 1)
-    assert e.val == 1
 
 
 def test_mult():
