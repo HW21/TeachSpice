@@ -92,8 +92,8 @@ class Tran(Analysis):
 
     def update(self):
         """ Update time-dependent (dynamic) circuit element terms. """
-        self.mx.Gt = np.zeros((self.mx.num_nodes, self.mx.num_nodes))
-        self.mx.st = np.zeros(self.mx.num_nodes)
+        self.mx.Gt = np.zeros((self.mx.size, self.mx.size))
+        self.mx.st = np.zeros(self.mx.size)
         for comp in self.ckt.comps:
             comp.tstep(an=self)
 
@@ -108,7 +108,6 @@ class Tran(Analysis):
         self.update()
         try:
             v = self.solver.solve()
-            # print(f'New Solution {v}')
             self.history.append(v)
         except Exception as e:
             print(f'Failed to converge at {self.t}: {e}')
@@ -116,7 +115,6 @@ class Tran(Analysis):
 
     def solve(self):
         for k in range(1000):
-            # print(f'Solving at time {self.t}')
             self.iterate()
             self.t += the_timestep
 

@@ -29,6 +29,7 @@ class Circuit(object):
     def __init__(self):
         self.comps = []
         self.nodes = []
+        self.vars = [] # Non-node variables, e.g. inductor currents
         self.forces = {}
         # Create node zero
         self.node0 = self.create_forced_node(name='gnd', v=0.0)
@@ -38,6 +39,10 @@ class Circuit(object):
     def define(self) -> None:
         """ Sub-classes can add content here. """
         pass
+
+    def add_variable(self, val=0.0) -> int:
+        self.vars.append(val)
+        return len(self.vars)-1
 
     def create_nodes(self, num: int):
         for k in range(num):
@@ -63,7 +68,6 @@ class Circuit(object):
     def create_comp(self, *, cls: type, **kw) -> Component:
         """ Create and add Component of class `cls`, and return it. """
         comp = cls(**kw)
-        # comp.ckt = self
         return self.add_comp(comp=comp)
 
     def add_comp(self, comp: Component) -> Component:
@@ -74,4 +78,5 @@ class Circuit(object):
             assert node in self.nodes or node in self.forces
         self.comps.append(comp)
         comp.ckt = self
+        comp.on_add()
         return comp

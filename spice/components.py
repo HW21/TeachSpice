@@ -45,6 +45,10 @@ class Component(object):
         Not this function must satisfy abs(limit(v)) <= abs(v), for any v. """
         return v
 
+    def on_add(self):
+        """ Call-back by `ckt` on addition of `self`."""
+        pass
+
     def mna_setup(self, an) -> None:
         pass
 
@@ -83,7 +87,7 @@ def mna_update_nonlinear_twoterm(comp, an):
         di_dv = comp.dq_dv(v) / the_timestep
 
         # Update the "past current" part of the cap, e.g. V[k-1]*C/dt
-        i =  v * comp.c / the_timestep
+        i = v * comp.c / the_timestep
         # FIXME: charge-based version
         # i = comp.q(v) / the_timestep - v * di_dv
     else:
@@ -204,6 +208,38 @@ class Capacitor(Component):
 
     def mna_update(self, an) -> None:
         return mna_update_nonlinear_twoterm(self, an)
+
+
+class Vsrc(Component):
+    """ Constant Voltage Source """
+
+    ports = TWO_TERM_PORTS
+    linear = True
+
+    def __init__(self, *, vdc: float, **kw):
+        super().__init__(**kw)
+        self.vdc = vdc
+        self.ivar = None
+
+    def i(self, v: Dict[AnyStr, SupportsFloat]) -> Dict[AnyStr, SupportsFloat]:
+        return dict()
+
+    def on_add(self):
+        self.ivar = self.ckt.add_variable()
+
+    def mna_setup(self, an):
+        mx = an.mx
+        p = self.conns['p']
+        n = self.conns['n']
+        iindex = self.ivar + len(self.ckt.nodes)
+
+        mx.s[iindex] = self.vdc
+        if p.solve:
+            mx.G[p.num, iindex] += 1.0
+            mx.G[iindex, p.num] += 1.0
+        if n.solve:
+            mx.G[n.num, iindex] -= 1.0
+            mx.G[iindex, n.num] -= 1.0
 
 
 class Isrc(Component):

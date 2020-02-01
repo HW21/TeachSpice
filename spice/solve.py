@@ -22,19 +22,19 @@ class MnaSystem(object):
         self.an = an
         ckt.mx = self
 
-        self.num_nodes = len(ckt.nodes)
+        self.size = len(ckt.nodes) + len(ckt.vars)
 
-        self.G = np.zeros((self.num_nodes, self.num_nodes))
-        self.Gt = np.zeros((self.num_nodes, self.num_nodes))
-        self.Jg = np.zeros((self.num_nodes, self.num_nodes))
-        self.Hg = np.zeros(self.num_nodes)
-        self.s = np.zeros(self.num_nodes)
-        self.st = np.zeros(self.num_nodes)
+        self.G = np.zeros((self.size, self.size))
+        self.Gt = np.zeros((self.size, self.size))
+        self.Jg = np.zeros((self.size, self.size))
+        self.Hg = np.zeros(self.size)
+        self.s = np.zeros(self.size)
+        self.st = np.zeros(self.size)
 
     def update(self) -> None:
         """ Update non-linear component operating points """
-        self.Jg = np.zeros((self.num_nodes, self.num_nodes))
-        self.Hg = np.zeros(self.num_nodes)
+        self.Jg = np.zeros((self.size, self.size))
+        self.Hg = np.zeros(self.size)
         for comp in self.ckt.comps:
             comp.mna_update(self.an)
 
@@ -64,7 +64,7 @@ class Solver:
     def __init__(self, an, x0=None):
         self.an = an
         self.mx = an.mx
-        self.x = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(self.mx.num_nodes)
+        self.x = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(self.mx.size)
         self.history = [np.copy(self.x)]
 
     def update(self):
