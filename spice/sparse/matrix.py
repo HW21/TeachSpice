@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Union, Optional
+from typing import Dict, List, Tuple, Union, Optional, Generator, Iterable
 from enum import Enum, IntEnum, auto
 
 
@@ -132,18 +132,18 @@ class SparseMatrix(object):
             s += ''.join(row) + '\n'
         return s
 
-    def elements(self, ax: Axis = Axis.cols):
+    def elements(self, ax: Axis = Axis.cols)-> Generator[Element]:
         """ Iterator of elements.  Major axis set by `ax` parameter.  Default: columns. """
         for c in self.hdrs(ax):
             while c is not None:
                 yield c
                 c = c.next(ax)
 
-    def values(self, *args, **kwargs):
+    def values(self, *args, **kwargs)-> Generator[float]:
         """ Columns-first iterator of element values"""
         for e in self.elements(*args, **kwargs): yield e.val
 
-    def col_elements(self, n: int, start: int = 0):
+    def col_elements(self, n: int, start: int = 0)-> Generator[Element]:
         c = self.cols[n]
         while c is not None and c.row < start:
             c = c.next_in_col
@@ -151,7 +151,7 @@ class SparseMatrix(object):
             yield c
             c = c.next_in_col
 
-    def row_elements(self, n: int, start: int = 0):
+    def row_elements(self, n: int, start: int = 0)-> Generator[Element]:
         c = self.rows[n]
         while c is not None and c.col < start:
             c = c.next_in_row
@@ -159,7 +159,8 @@ class SparseMatrix(object):
             yield c
             c = c.next_in_row
 
-    def submatrix_elements(self, n: int):
+    def submatrix_elements(self, n: int) -> Generator[Element]:
+        """ Generator of Elements in sub-matrix with row/col ≥ n """
         for c in self.cols[n:]:
             while c is not None and c.row < n:
                 c = c.next_in_col
@@ -474,7 +475,8 @@ class SparseMatrix(object):
             return p
         return self.find_max(n)
 
-    def search_diagonal(self, n: int = 0) -> Optional[Element]:
+    def markowitz_search(self, elems: Iterable[Optional[Element]]) -> Optional[Element]:
+        """ Markowitz-based search of Elements in iterator `elems`. """
 
         REL_THRESHOLD = 1e-3
         ABS_THRESHOLD = 0
@@ -484,65 +486,45 @@ class SparseMatrix(object):
         best_mark = None
         best_ratio = None
         num_ties = 0
+        col = -1
 
-        for d in self.diag[n:]:
-            if d is None:
+        for e in elems:
+            if e is None:
                 continue
-            max_in_col = self.max_after_index(Axis.cols, index=n, after=n)
+            if e.col != col:
+                max_in_col = self.max_after_index(Axis.cols, index=e.col, after=e.col)
+                col = e.col
+
             threshold = REL_THRESHOLD * abs(max_in_col.val) + ABS_THRESHOLD
-            if abs(d.val) < threshold:
+            if abs(e.val) < threshold:
                 continue
-            mark = self.markowitz_product(d)
+
+            mark = self.markowitz_product(e)
             if best_mark is None or mark < best_mark:
                 num_ties = 0
-                best_elem = d
+                best_elem = e
                 best_mark = mark
-                best_ratio = abs(d.val / max_in_col.val)
+                best_ratio = abs(e.val / max_in_col.val)
             elif mark == best_mark:
                 num_ties += 1
-                ratio = abs(d.val / max_in_col.val)
+                ratio = abs(e.val / max_in_col.val)
                 if ratio > best_ratio:
-                    best_elem = d
+                    best_elem = e
                     best_mark = mark
                     best_ratio = ratio
                 if num_ties >= best_mark * TIES_MULT:
                     return best_elem
+
         return best_elem
+
+    def search_diagonal(self, n: int = 0) -> Optional[Element]:
+        """ Markowitz-based search of diagonal elements """
+        return self.markowitz_search(self.diag[n:])
 
     def search_submatrix(self, n: int = 0) -> Optional[Element]:
         """ Markowitz-based search for pivot element.
         Markowitz=product ties are broken by ratio of element value to largest value in its column. """
-
-        REL_THRESHOLD = 1e-3
-        ABS_THRESHOLD = 0
-
-        best_elem = None
-        best_mark = None
-        best_ratio = None
-
-        for e in self.cols[n:]:
-            while e is not None and e.row < n:
-                e = e.next_in_col
-            max_in_col = self.find_max_below(e)
-            while e is not None:
-                mark = self.markowitz_product(e)
-                # Check whether the best in column qualifies
-                threshold = REL_THRESHOLD * abs(max_in_col.val) + ABS_THRESHOLD
-                if abs(e.val) >= threshold:
-                    if best_elem is None or mark < best_mark:
-                        best_elem = e
-                        best_mark = mark
-                        best_ratio = abs(e.val / max_in_col.val)
-                    elif mark == best_mark:
-                        # Tie-break via ratio of value to max-value in column
-                        ratio = abs(e.val / max_in_col.val)
-                        if best_ratio is None or ratio > best_ratio:
-                            best_elem = e
-                            best_mark = mark
-                            best_ratio = ratio
-                e = e.next_in_col
-
-        return best_elem
+        return self.markowitz_search(self.submatrix_elements(n))
 
     def markowitz_product(self, e: Element) -> int:
         Assert(e).is_not(None)
