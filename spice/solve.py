@@ -44,16 +44,8 @@ class MnaSystem(object):
 
     def solve(self, x: np.ndarray) -> np.ndarray:
         """ Solve our temporary-valued matrix for a change in x. """
-        # print(f'G: {self.G}')
-        # print(f'G-dot-x: {self.G.dot(x)}')
-        # print(f'Jg: {self.Jg}')
-        # print(f'Hg: {self.Hg}')
-        # print(f's: {self.s}')
-
         lhs = self.G + self.Gt + self.Jg
         rhs = -1 * self.res(x)
-        # print(f'lhs: {lhs}')
-        # print(f'rhs: {rhs}')
         dx = np.linalg.solve(lhs, rhs)
         return dx
 
@@ -80,18 +72,12 @@ class Solver:
         # Step limiting
         MAX_STEP = 0.1
         if np.any(np.abs(dx) > MAX_STEP):
-            # print(f'MAX STEPPING {np.max(np.abs(dx))}')
             dx *= MAX_STEP / np.max(np.abs(dx))
-        # print(f'Updating by: {dx}')
         self.x += dx
         self.history.append(np.copy(self.x))
 
     def converged(self) -> bool:
         """ Convergence test, including Newton-iteration-similarity and KCL. """
-
-        # FIXME: WTF we doing this for?
-        # self.update()
-
         # Newton iteration similarity
         v_tol = 1e-6
         v_diff = self.history[-1] - self.history[-2]
@@ -121,7 +107,6 @@ class Solver:
             print(self.history)
             raise Exception(f'Could Not Converge to Solution ')
 
-        # print(f'Successfully Converged to {self.x} in {i+1} iterations')
         return self.x
 
 
@@ -159,22 +144,17 @@ class ScipySolver:
         return v
 
     def guess(self, x):
-        # print(f'Guessing {x}')
         self.x = x
         self.history.append(x)
         an = self.an
         kcl_results = np.zeros(len(an.ckt.nodes))
         for comp in an.ckt.comps:
             comp_v = self.get_v(comp)
-            # print(f'{comp} has voltages {comp_v}')
             comp_i = comp.i(comp_v)
-            # {d:1.3, s:=1.3, g:0, b:0}
             for name, i in comp_i.items():
                 node = comp.conns[name]
                 if node.solve:
-                    # print(f'{comp} updating {node} by {i}')
                     kcl_results[node.num] += i
-        # print(f'KCL: {kcl_results}')
         rv = np.sum(kcl_results ** 2)
         self.results.append(rv)
         return rv

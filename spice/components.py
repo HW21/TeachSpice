@@ -259,7 +259,7 @@ class Isrc(Component):
         s = an.mx.s
         p = self.conns['p']
         n = self.conns['n']
-        assert not n.solve  # No floating sources, yet
+        assert not n.solve  # FIXME: No floating sources, yet
         s[p.num] = 1 * self.idc
 
 

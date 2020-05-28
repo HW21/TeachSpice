@@ -29,7 +29,7 @@ class Circuit(object):
     def __init__(self):
         self.comps = []
         self.nodes = []
-        self.vars = [] # Non-node variables, e.g. inductor currents
+        self.vars = []  # Non-node variables, e.g. inductor currents
         self.forces = {}
         # Create node zero
         self.node0 = self.create_forced_node(name='gnd', v=0.0)
@@ -42,11 +42,15 @@ class Circuit(object):
 
     def add_variable(self, val=0.0) -> int:
         self.vars.append(val)
-        return len(self.vars)-1
+        return len(self.vars) - 1
 
-    def create_nodes(self, num: int):
+    def create_nodes(self, num: int) -> list:
+        nodes = []
         for k in range(num):
-            self.add_node(Node())
+            n = Node()
+            self.add_node(n)
+            nodes.append(n)
+        return nodes
 
     def add_node(self, node: Node) -> int:
         assert isinstance(node, Node)

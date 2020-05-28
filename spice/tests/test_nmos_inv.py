@@ -1,33 +1,35 @@
-from .. import Circuit, DcOp, Resistor, Mos
-from ..analysis import Contour
+import numpy as np
+
+from .. import DcOp
 
 
-def nmos_inv(vgs):
+def nmos_inv(vgs: float):
+    """ Create an instance of an NMOS-resistor inverter, with Vgs=`vgs`. """
+    from .. import Circuit, Resistor, Mos, Vsrc
+
     class NmosInv(Circuit):
         """ NMOS-Resistor Inverter """
 
         def define(self):
-            self.create_nodes(1)
-            vdd = self.create_forced_node(name='vdd', v=1.0)
-            g = self.create_forced_node(name='vgs', v=vgs)
+            [g, d, vdd] = self.create_nodes(3)
 
+            self.create_comp(cls=Vsrc, vdc=1.0, conns=dict(p=vdd, n=self.node0))
+            self.create_comp(cls=Vsrc, vdc=vgs, conns=dict(p=g, n=self.node0))
             self.create_comp(cls=Mos, polarity=1,
                              conns={'s': self.node0, 'b': self.node0,
-                                    'd': self.nodes[0], 'g': g})
+                                    'd': d, 'g': g})
             self.create_comp(cls=Resistor, r=10e3,
-                             conns=dict(p=vdd, n=self.nodes[0], ), )
+                             conns=dict(p=vdd, n=d))
 
     return NmosInv()
 
 
 def test_dcop():
-    vds = 0.0  # 1.0
-    vgs = 0.0
-    dut = nmos_inv(vgs)
+    dut = nmos_inv(0.0)
     s = DcOp(ckt=dut)
 
-    y = s.solve([vds])
-    print(y)
+    y = s.solve()
+    assert np.allclose(y, [0, 1.0, 1.0, 0, 0])  # g, d, vdd, two Vsrc currents
 
 
 def test_dc_sweep():
@@ -40,24 +42,9 @@ def test_dc_sweep():
         s = DcOp(ckt=dut)
 
         s.solve([vds])
-        vds = s.v[0]
+        vds = s.v[1]
         vg += [vgs]
         vd += [vds]
-    print(vg)
-    print(vd)
 
     assert (vd[0] > 0.9)
     assert (vd[-1] < 0.1)
-
-# def test_nmos_inv_contour():
-#     xs = []
-#     dxs = []
-#     for k in range(11):
-#         vgs = k / 10.0
-#         dut = nmos_inv(vgs)
-#         an = Contour(dut)
-#         x, dx = an.explore()
-#         xs.append(x)
-#         dxs.append(dx)
-#     print(xs)
-#     print(dxs)

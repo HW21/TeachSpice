@@ -28,11 +28,15 @@ class Analysis(object):
 
 
 class DcOp(Analysis):
-    def solve(self, x0=[0.0]):
+    def solve(self, x0=None):
         """ Solve for steady-state response.
         Includes gmin-stepping style homotopy. """
 
-        x = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(len(self.ckt.nodes))
+        if x0 is not None and len(x0) == len(self.ckt.nodes):
+            x = np.array(x0, dtype='float64')
+        else:
+            x = np.zeros(len(self.ckt.nodes))
+        # x = np.array(x0, dtype='float64') if np.any(x0) else np.zeros(self.mx.size)
 
         # Set up gmin resistors
         rmin_exponent = 0
@@ -47,16 +51,20 @@ class DcOp(Analysis):
             r = Resistor(r=10 ** rmin_exponent, conns={'p': node, 'n': n})
             self.ckt.add_comp(r)
             rmin_resistors.append(r)
+
+        # Now set up our matrix
         self.mna_setup()
 
-        xi = np.copy(x0)
+        # Add in zeroes for any new variables created
+        if len(x) == self.mx.size:
+            xi = np.copy(x)
+        else:
+            xi = np.concatenate([np.copy(x), np.zeros(self.mx.size - len(x))])
+
         while rmin_exponent <= 12:
-            # print(f'Solving with rmin=10**{rmin_exponent}')
-
             self.solver = TheSolverCls(self, x0=xi)
-
             xi = self.solver.solve()
-            # print(f'Solution: {xi}')
+
             rmin_exponent += 1
             for r in rmin_resistors:
                 r.update(r=10 ** rmin_exponent)
